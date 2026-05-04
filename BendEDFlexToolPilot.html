@@ -4,6 +4,36 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Bend ED — Charge RN Flex</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Firebase SDK (modular, ES modules via skypack-style CDN) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+  import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+  // Bend ED Charge Flex — Firestore project
+  const firebaseConfig = {
+    apiKey: "AIzaSyAFG49fj0grnEoh9AiBfSr-CLBqe6cy860",
+    authDomain: "charge-rn-flex-tool.firebaseapp.com",
+    projectId: "charge-rn-flex-tool",
+    storageBucket: "charge-rn-flex-tool.firebasestorage.app",
+    messagingSenderId: "161499467250",
+    appId: "1:161499467250:web:f889ca231575b004a66f6b"
+  };
+  // Expose to window so the rest of the tool's classic-script can access it
+  try {
+    const app = initializeApp(firebaseConfig);
+    window._fb = {
+      db: getFirestore(app),
+      doc, onSnapshot, setDoc, serverTimestamp,
+      ready: true,
+    };
+    // Tell the page Firebase is ready (the page-level go() listener will pick this up)
+    window.dispatchEvent(new CustomEvent('firebase-ready'));
+  } catch(err) {
+    console.warn('Firebase init failed:', err);
+    window._fb = { ready: false, error: err };
+    window.dispatchEvent(new CustomEvent('firebase-failed'));
+  }
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -27,6 +57,20 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 .hdr-sub{font-size:10px;color:var(--t3);font-family:var(--mono);margin-top:1px}
 .clock{font-family:var(--mono);font-size:13px;color:var(--t2);display:flex;align-items:center;gap:7px}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:blink 2.2s infinite}
+.sync-status{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;
+             padding:4px 9px;border-radius:5px;background:var(--s2);border:1px solid var(--b1);
+             cursor:help}
+.sync-status .sync-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sync-status.sync-init .sync-dot{background:var(--t3);animation:blink 1s infinite}
+.sync-status.sync-init{color:var(--t3)}
+.sync-status.sync-live .sync-dot{background:var(--green)}
+.sync-status.sync-live{color:var(--green);border-color:var(--green-line)}
+.sync-status.sync-writing .sync-dot{background:var(--blue);animation:blink .6s infinite}
+.sync-status.sync-writing{color:var(--blue)}
+.sync-status.sync-offline .sync-dot{background:var(--amber)}
+.sync-status.sync-offline{color:var(--amber);border-color:var(--amber-line)}
+.sync-status.sync-error .sync-dot{background:var(--red)}
+.sync-status.sync-error{color:var(--red);border-color:var(--red-line)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .signal{margin:14px 16px 0;border-radius:12px;padding:14px 18px;border:1px solid;
         display:grid;grid-template-columns:48px 1fr auto;align-items:center;gap:12px}
@@ -98,6 +142,14 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 .l4{background:rgba(88,166,255,.15);color:var(--blue)}
 .l5{background:rgba(46,160,67,.15);color:var(--green)}
 .lb{background:rgba(176,142,255,.15);color:var(--purple)}
+/* Boarder destination labels — color graded by care intensity */
+.bd-icu  {background:rgba(248,81,73,.18);color:#ff8070}
+.bd-pcu  {background:rgba(255,150,80,.16);color:#ffa066}
+.bd-imcu {background:rgba(255,180,90,.16);color:#ffba6a}
+.bd-peds {background:rgba(255,200,120,.16);color:#ffce80}
+.bd-ortho{background:rgba(176,142,255,.14);color:var(--purple)}
+.bd-surg {background:rgba(88,166,255,.14);color:var(--blue)}
+.bd-med  {background:rgba(46,160,67,.14);color:var(--green)}
 .rn-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 /* RN staffing */
 .rn-total-row{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--b1);margin-bottom:10px}
@@ -130,6 +182,88 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 .brk-mode-btn:active{background:var(--s3)}
 .brk-mode-suggest{font-size:10px;margin-top:6px;font-family:var(--mono);line-height:1.5}
 
+/* Productivity score */
+.prod-score-row{display:flex;align-items:baseline;gap:10px;padding:10px 0 6px;
+                border-bottom:1px solid var(--b1);margin-bottom:10px}
+.prod-num{font-size:34px;font-weight:600;font-family:var(--mono);line-height:1}
+.prod-target{font-size:11px;color:var(--t2);font-family:var(--mono);margin-left:auto;text-align:right}
+.prod-target-num{font-size:13px;color:var(--t1);font-family:var(--mono)}
+.prod-status{font-size:11px;font-weight:600;font-family:var(--mono);letter-spacing:.06em;
+             padding:3px 8px;border-radius:4px}
+.p-good {background:var(--green-dim);color:var(--green)}
+.p-watch{background:var(--amber-dim);color:var(--amber)}
+.p-over {background:var(--red-dim);color:var(--red)}
+.prod-bar{height:8px;background:var(--s3);border-radius:4px;overflow:hidden;margin:6px 0 4px;position:relative}
+.prod-bar-fill{height:100%;border-radius:4px;transition:width .25s,background .25s}
+.prod-bar-target{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--t2)}
+.prod-bar-zones{display:flex;justify-content:space-between;font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:1px}
+.prod-inputs{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
+             padding:8px 0;border-bottom:1px solid var(--b1)}
+.prod-inputs:last-of-type{border-bottom:none}
+.prod-input-lbl{font-size:12px;color:var(--t2)}
+.prod-input-sub{font-size:10px;color:var(--t3);font-family:var(--mono);margin-top:2px}
+.prod-mode-toggle{display:inline-flex;border:1px solid var(--b2);border-radius:6px;overflow:hidden}
+.prod-mode-btn{background:var(--s2);border:none;color:var(--t2);padding:5px 10px;
+               font-size:10px;font-weight:500;font-family:var(--mono);cursor:pointer;
+               letter-spacing:.04em;touch-action:manipulation}
+.prod-mode-btn.active{background:var(--blue-dim);color:var(--blue)}
+.prod-mode-btn:active{background:var(--s3)}
+.prod-detail{font-size:11px;color:var(--t2);font-family:var(--mono);line-height:1.7;
+             margin-top:8px;padding-top:8px;border-top:1px solid var(--b1)}
+.prod-detail strong{color:var(--t1);font-weight:500}
+.prod-flex-hint{font-size:11px;margin-top:6px;padding:7px 10px;border-radius:6px;line-height:1.4;font-family:var(--mono)}
+
+/* Period grid */
+.pg-wrap{margin-top:10px;border:1px solid var(--b1);border-radius:8px;overflow:hidden;background:var(--s2)}
+.pg-table{width:100%;border-collapse:collapse;font-size:11px;font-family:var(--mono)}
+.pg-table th,.pg-table td{padding:5px 4px;text-align:center;border-right:1px solid var(--b1);border-bottom:1px solid var(--b1)}
+.pg-table th:last-child,.pg-table td:last-child{border-right:none}
+.pg-table tr:last-child td{border-bottom:none}
+.pg-table th{background:var(--s3);color:var(--t2);font-weight:600;font-size:9px;letter-spacing:.04em;text-transform:uppercase;padding:6px 4px}
+.pg-table th.pg-now{background:var(--accent-dim);color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.pg-table th.pg-future{background:var(--s2);color:var(--t3)}
+.pg-table td.pg-rolelbl{text-align:left;padding-left:8px;color:var(--t2);background:var(--s3);font-weight:500;letter-spacing:.02em;font-size:10px;text-transform:uppercase}
+.pg-table td.pg-future{background:var(--s2);opacity:.4}
+.pg-table td.pg-now-col{background:rgba(31,119,212,.06)}
+.pg-cell{display:flex;align-items:center;justify-content:center;gap:1px}
+.pg-input{background:var(--s1);border:1px solid var(--b1);color:var(--t1);font-size:11px;
+          font-family:var(--mono);font-weight:500;text-align:center;width:40px;padding:3px 0;
+          border-radius:3px;outline:none;-moz-appearance:textfield}
+.pg-input:focus{border-color:var(--accent);background:var(--s2)}
+.pg-input::-webkit-outer-spin-button,.pg-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.pg-input.pg-future{opacity:.3}
+.pg-totals-row td{font-weight:500;color:var(--t1);background:var(--s3)}
+.pg-totals-row td.pg-rolelbl{color:var(--t1)}
+.pg-arr-row td{background:var(--s3)}
+.pg-arr-input{background:var(--s1);border:1px solid var(--b2);color:var(--t1);font-size:12px;
+              font-family:var(--mono);font-weight:600;text-align:center;width:48px;padding:4px 0;
+              border-radius:4px;outline:none;-moz-appearance:textfield}
+.pg-arr-input:focus{border-color:var(--accent)}
+.pg-arr-input::-webkit-outer-spin-button,.pg-arr-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.pg-arr-input.pg-future{opacity:.3}
+.pg-uos-row td{background:var(--s2);color:var(--t2);font-size:10px;padding:5px 4px}
+.pg-uos-row td.pg-uos-good{color:var(--green)}
+.pg-uos-row td.pg-uos-watch{color:var(--amber)}
+.pg-uos-row td.pg-uos-over{color:var(--red)}
+.pg-help{font-size:10px;color:var(--t3);margin-top:6px;font-family:var(--mono);line-height:1.5}
+
+/* Staffing calculators (3h / 4h / 5h) — mirrors April spreadsheet formulas */
+.sc-wrap{margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.sc-cell{background:var(--s2);border:1px solid var(--b1);border-radius:7px;padding:8px 10px}
+.sc-title{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t2);font-family:var(--mono);margin-bottom:6px;text-align:center}
+.sc-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--t2);font-family:var(--mono);margin:3px 0}
+.sc-row label{flex:1}
+.sc-row input{width:38px;background:var(--s1);border:1px solid var(--b1);color:var(--t1);font-size:11px;font-family:var(--mono);text-align:center;padding:2px 0;border-radius:3px;outline:none;-moz-appearance:textfield}
+.sc-row input:focus{border-color:var(--accent)}
+.sc-row input::-webkit-outer-spin-button,.sc-row input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.sc-result{margin-top:6px;padding-top:6px;border-top:1px solid var(--b1);text-align:center}
+.sc-result-lbl{font-size:9px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em}
+.sc-result-val{font-size:18px;font-weight:600;color:var(--accent);font-family:var(--mono)}
+.sc-help{font-size:10px;color:var(--t3);margin-top:8px;font-family:var(--mono);line-height:1.4;text-align:center;font-style:italic}
+.prod-flex-hint.alert-good {background:var(--green-dim);color:var(--green);border:1px solid var(--green-line)}
+.prod-flex-hint.alert-watch{background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber-line)}
+.prod-flex-hint.alert-over {background:var(--red-dim);color:var(--red);border:1px solid var(--red-line)}
+
 /* Waiting room */
 .wr-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
 .wr-cell{display:flex;flex-direction:column;gap:4px}
@@ -156,6 +290,46 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 .ape-unit{font-size:11px;color:var(--t2)}
 .ape-track{height:10px;background:var(--s3);border-radius:5px;overflow:hidden;margin:5px 0 4px}
 .ape-fill{height:100%;border-radius:5px;transition:width .25s,background .25s}
+
+/* Headcount ratio block */
+.hcr-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin-top:8px}
+.hcr-cell{display:flex;flex-direction:column;align-items:center;text-align:center;padding:10px 8px;border-radius:8px;background:var(--s2);border:1px solid var(--b1)}
+.hcr-lbl{font-size:9px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:var(--t3);font-family:var(--mono);margin-bottom:6px}
+.hcr-num{font-size:28px;font-weight:600;font-family:var(--mono);line-height:1;letter-spacing:-.01em}
+.hcr-unit{font-size:10px;color:var(--t2);font-family:var(--mono);margin-top:4px}
+.hcr-status{font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;
+            padding:2px 7px;border-radius:4px;margin-top:6px;display:inline-block}
+.hcr-status.s-under{background:var(--blue-dim);color:var(--blue)}
+.hcr-status.s-good {background:var(--green-dim);color:var(--green)}
+.hcr-status.s-watch{background:var(--amber-dim);color:var(--amber)}
+.hcr-status.s-over {background:var(--red-dim);color:var(--red)}
+.hcr-divergence{margin-top:9px;padding:7px 10px;border-radius:6px;font-size:11px;font-family:var(--mono);line-height:1.4}
+
+/* Unified recommendation card */
+.rec-card{padding:14px 16px;border:1px solid;border-radius:10px;margin-bottom:10px;transition:background .25s,border-color .25s}
+.rec-flex {background:var(--blue-dim);  border-color:var(--blue-line)}
+.rec-hold {background:var(--green-dim); border-color:var(--green-line)}
+.rec-watch{background:var(--amber-dim);border-color:var(--amber-line)}
+.rec-call {background:var(--red-dim);   border-color:var(--red-line)}
+.rec-tag{font-size:9px;font-weight:600;letter-spacing:.12em;font-family:var(--mono);margin-bottom:4px}
+.rec-flex .rec-tag {color:var(--blue)}
+.rec-hold .rec-tag {color:var(--green)}
+.rec-watch .rec-tag {color:var(--amber)}
+.rec-call .rec-tag {color:var(--red)}
+.rec-headline{font-size:18px;font-weight:600;line-height:1.25;margin-bottom:5px}
+.rec-flex .rec-headline {color:var(--blue)}
+.rec-hold .rec-headline {color:var(--green)}
+.rec-watch .rec-headline {color:var(--amber)}
+.rec-call .rec-headline {color:var(--red)}
+.rec-explain{font-size:12px;color:var(--t1);line-height:1.45;margin-bottom:8px;opacity:.92}
+.rec-numbers{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px;padding-top:9px;border-top:1px solid rgba(255,255,255,0.08)}
+.rec-num-cell{text-align:center;padding:5px 6px}
+.rec-num-lbl{font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--t2);font-family:var(--mono);margin-bottom:3px}
+.rec-num-val{font-size:18px;font-weight:600;font-family:var(--mono);line-height:1}
+.rec-num-sub{font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:2px}
+.rec-modifier{font-size:11px;color:var(--t2);font-family:var(--mono);margin-top:8px;padding:5px 8px;border-radius:5px;background:rgba(255,255,255,0.04);font-style:italic;line-height:1.4}
+.hcr-div-good {background:var(--green-dim);color:var(--green);border:1px solid var(--green-line)}
+.hcr-div-warn {background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber-line)}
 .ape-zones{display:flex;justify-content:space-between;font-size:9px;color:var(--t3);font-family:var(--mono)}
 .bktable{width:100%;border-collapse:collapse;font-size:12px}
 .bktable td{padding:3px 0;border-bottom:1px solid var(--b1)}
@@ -171,6 +345,17 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 /* Forecast */
 .fc-wrap{display:flex;align-items:flex-end;gap:3px;height:46px;margin:8px 0 4px}
 .fc-bar{flex:1;border-radius:3px 3px 0 0;min-height:3px}
+.fc-day-wrap{display:flex;align-items:flex-end;gap:1px;height:54px;margin:8px 0 4px}
+.fc-day-bar{flex:1;border-radius:2px 2px 0 0;min-height:3px;transition:opacity .15s}
+.fc-day-bar.past{background:var(--t3);opacity:.55}
+.fc-day-bar.past-actual{background:var(--green);opacity:.7}
+.fc-day-bar.now{background:var(--accent)}
+.fc-day-bar.future{background:var(--accent);opacity:.5}
+.fc-day-xl{display:flex;gap:1px;font-size:8px;color:var(--t3);font-family:var(--mono);margin-top:2px}
+.fc-day-xl span{flex:1;text-align:center}
+.fc-zoom-divider{height:1px;background:var(--b1);margin:14px -16px 12px}
+.fc-pace{font-size:10px;color:var(--t3);font-family:var(--mono);margin-top:6px;line-height:1.4}
+.fc-pace.adapted{color:var(--amber)}
 .fc-now{background:rgba(88,166,255,.55)}
 .fc-soon{background:rgba(88,166,255,.25)}
 .fc-later{background:var(--s3)}
@@ -237,7 +422,12 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 <div class="hdr">
   <div><div class="hdr-title">Bend ED — Charge Flex</div>
        <div class="hdr-sub">APE · 3:1 floor · 4:1 target · BH sitters 1:1</div></div>
-  <div class="clock"><span class="dot"></span><span id="clk">—</span></div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div id="syncStatus" class="sync-status sync-init" title="Live shared state status">
+      <span class="sync-dot"></span><span id="syncText">connecting…</span>
+    </div>
+    <div class="clock"><span class="dot"></span><span id="clk">—</span></div>
+  </div>
 </div>
 
 <div class="signal s-ok" id="sig">
@@ -273,18 +463,56 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
   <div class="card">
     <div class="ctitle">Patients in rooms — ESI counts</div>
     <div class="esi-grid">
-      <div class="esi-cell"><div class="elbl l1">ESI 1 · 5×</div>
+      <div class="esi-cell"><div class="elbl l1">ESI 1 · 4.25×</div>
         <div class="stepper"><button class="sbtn" onclick="adj('e1',-1)">−</button><input class="sval" id="e1" value="0" oninput="go()"><button class="sbtn" onclick="adj('e1',1)">+</button></div></div>
-      <div class="esi-cell"><div class="elbl l2">ESI 2 · 2×</div>
+      <div class="esi-cell"><div class="elbl l2">ESI 2 · 1.5×</div>
         <div class="stepper"><button class="sbtn" onclick="adj('e2',-1)">−</button><input class="sval" id="e2" value="1" oninput="go()"><button class="sbtn" onclick="adj('e2',1)">+</button></div></div>
-      <div class="esi-cell"><div class="elbl l3">ESI 3 · 1.5×</div>
+      <div class="esi-cell"><div class="elbl l3">ESI 3 · 1.05×</div>
         <div class="stepper"><button class="sbtn" onclick="adj('e3',-1)">−</button><input class="sval" id="e3" value="10" oninput="go()"><button class="sbtn" onclick="adj('e3',1)">+</button></div></div>
-      <div class="esi-cell"><div class="elbl l4">ESI 4 · 1×</div>
+      <div class="esi-cell"><div class="elbl l4">ESI 4 · 0.85×</div>
         <div class="stepper"><button class="sbtn" onclick="adj('e4',-1)">−</button><input class="sval" id="e4" value="5" oninput="go()"><button class="sbtn" onclick="adj('e4',1)">+</button></div></div>
-      <div class="esi-cell"><div class="elbl l5">ESI 5 · 0.6×</div>
+      <div class="esi-cell"><div class="elbl l5">ESI 5 · 0.5×</div>
         <div class="stepper"><button class="sbtn" onclick="adj('e5',-1)">−</button><input class="sval" id="e5" value="2" oninput="go()"><button class="sbtn" onclick="adj('e5',1)">+</button></div></div>
-      <div class="esi-cell"><div class="elbl lb">Boarding +0.5×</div>
-        <div class="stepper"><button class="sbtn" onclick="adj('bd',-1)">−</button><input class="sval" id="bd" value="3" oninput="go()"><button class="sbtn" onclick="adj('bd',1)">+</button></div></div>
+    </div>
+
+    <div style="margin-top:12px;padding-top:9px;border-top:1px solid var(--b1)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px">
+        <span style="font-size:9px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:var(--t3);font-family:var(--mono)">Of those, FAST/RME patients</span>
+        <span id="frSum" style="font-family:var(--mono);font-size:11px;color:var(--t2)">— subtracted from main floor</span>
+      </div>
+      <div class="esi-cell">
+        <div class="elbl" style="background:rgba(120,120,180,.15);color:#a8b0d0">FAST/RME patients</div>
+        <div class="stepper"><button class="sbtn" onclick="adj('frPts',-1)">−</button><input class="sval" id="frPts" value="0" oninput="go()"><button class="sbtn" onclick="adj('frPts',1)">+</button></div>
+      </div>
+      <div style="margin-top:6px;font-size:9px;color:var(--t3);font-family:var(--mono);line-height:1.4">
+        Patients in RME spaces (FAST + RME workflows can't be split from the floor view). Subtracted from main-floor ratios so they don't double-count against main ED RNs. Default populates from staffing (FAST × 4 + RME × 3) when 0.
+      </div>
+    </div>
+
+    <div style="margin-top:12px;padding-top:9px;border-top:1px solid var(--b1)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px">
+        <span style="font-size:9px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:var(--t3);font-family:var(--mono)">Boarders by destination</span>
+        <span id="bdSum" style="font-family:var(--mono);font-size:11px;color:var(--t2)">0 boarders · +0.0 APE</span>
+      </div>
+      <div class="esi-grid">
+        <div class="esi-cell"><div class="elbl bd-icu">ICU +1.25×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdIcu',-1)">−</button><input class="sval" id="bdIcu" value="0" oninput="go()"><button class="sbtn" onclick="adj('bdIcu',1)">+</button></div></div>
+        <div class="esi-cell"><div class="elbl bd-pcu">PCU +0.85×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdPcu',-1)">−</button><input class="sval" id="bdPcu" value="0" oninput="go()"><button class="sbtn" onclick="adj('bdPcu',1)">+</button></div></div>
+        <div class="esi-cell"><div class="elbl bd-imcu">IMCU +0.85×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdImcu',-1)">−</button><input class="sval" id="bdImcu" value="0" oninput="go()"><button class="sbtn" onclick="adj('bdImcu',1)">+</button></div></div>
+        <div class="esi-cell"><div class="elbl bd-peds">Peds +0.85×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdPeds',-1)">−</button><input class="sval" id="bdPeds" value="0" oninput="go()"><button class="sbtn" onclick="adj('bdPeds',1)">+</button></div></div>
+        <div class="esi-cell"><div class="elbl bd-ortho">Ortho/Neuro +0.4×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdOrtho',-1)">−</button><input class="sval" id="bdOrtho" value="0" oninput="go()"><button class="sbtn" onclick="adj('bdOrtho',1)">+</button></div></div>
+        <div class="esi-cell"><div class="elbl bd-surg">Surgical +0.4×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdSurg',-1)">−</button><input class="sval" id="bdSurg" value="0" oninput="go()"><button class="sbtn" onclick="adj('bdSurg',1)">+</button></div></div>
+        <div class="esi-cell"><div class="elbl bd-med">Medical +0.4×</div>
+          <div class="stepper"><button class="sbtn" onclick="adj('bdMed',-1)">−</button><input class="sval" id="bdMed" value="3" oninput="go()"><button class="sbtn" onclick="adj('bdMed',1)">+</button></div></div>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--b1);font-size:9px;color:var(--t3);font-family:var(--mono);line-height:1.4">
+        Headcount includes boarder ratio adjustment: ICU 1:1 = +3 effective slots per pt · PCU/IMCU/Peds 3:1 = +0.33 · Ortho/Surg/Med 4:1 = +0
+      </div>
     </div>
     <div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--b1)">
       <div class="rn-row">
@@ -318,8 +546,16 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
         <div class="stepper"><button class="sbtn sbtn-sm" onclick="adj('rnTrauma',-1)">−</button><input class="sval sval-sm" id="rnTrauma" value="1" oninput="go()"><button class="sbtn sbtn-sm" onclick="adj('rnTrauma',1)">+</button></div>
       </div>
       <div class="rn-role-row">
-        <span class="role-lbl">Break / floater</span>
+        <span class="role-lbl">Break / resource</span>
         <div class="stepper"><button class="sbtn sbtn-sm" onclick="adj('rnBreak',-1)">−</button><input class="sval sval-sm" id="rnBreak" value="1" oninput="go()"><button class="sbtn sbtn-sm" onclick="adj('rnBreak',1)">+</button></div>
+      </div>
+      <div class="rn-role-row">
+        <span class="role-lbl">RME <span style="font-size:9px;color:var(--t3);font-weight:400">· WR labs/IVs</span></span>
+        <div class="stepper"><button class="sbtn sbtn-sm" onclick="adj('rnRme',-1)">−</button><input class="sval sval-sm" id="rnRme" value="0" oninput="go()"><button class="sbtn sbtn-sm" onclick="adj('rnRme',1)">+</button></div>
+      </div>
+      <div class="rn-role-row">
+        <span class="role-lbl">FAST <span style="font-size:9px;color:var(--t3);font-weight:400">· fast track</span></span>
+        <div class="stepper"><button class="sbtn sbtn-sm" onclick="adj('rnFast',-1)">−</button><input class="sval sval-sm" id="rnFast" value="0" oninput="go()"><button class="sbtn sbtn-sm" onclick="adj('rnFast',1)">+</button></div>
       </div>
     </div>
     <div class="rn-derived">
@@ -360,10 +596,23 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 
   <!-- Forecast -->
   <div class="card">
-    <div class="ctitle">Arrival forecast — next 6 hours</div>
+    <div class="ctitle" style="display:flex;justify-content:space-between;align-items:baseline">
+      <span>Arrival forecast — full day</span>
+      <span id="fcDailyTotal" style="font-size:10px;color:var(--t3);text-transform:none;letter-spacing:0;font-family:var(--mono)">—</span>
+    </div>
+    <div class="fc-day-wrap" id="fcDayBars"></div>
+    <div class="fc-day-xl" id="fcDayLbls"></div>
+    <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:2px;display:flex;justify-content:space-between">
+      <span><span style="display:inline-block;width:8px;height:8px;background:var(--t3);opacity:0.6;border-radius:1px;vertical-align:middle"></span> past</span>
+      <span><span style="display:inline-block;width:8px;height:8px;background:var(--accent);border-radius:1px;vertical-align:middle"></span> now</span>
+      <span><span style="display:inline-block;width:8px;height:8px;background:var(--accent);opacity:0.5;border-radius:1px;vertical-align:middle"></span> forecast</span>
+    </div>
+    <div class="fc-zoom-divider"></div>
+    <div style="font-size:10px;color:var(--t2);font-family:var(--mono);margin-bottom:4px">Next 6 hours zoom</div>
     <div class="fc-wrap" id="fcBars"></div>
     <div class="fc-xl" id="fcLbls"></div>
     <div style="font-size:11px;color:var(--t2);margin-top:4px" id="fcStat">—</div>
+    <div class="fc-pace" id="fcPace"></div>
   </div>
 </div>
 
@@ -384,6 +633,29 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
     <table class="bktable" style="margin-top:8px"><tbody id="apeBreak"></tbody></table>
     <div class="bands" id="bands"></div>
     <div style="font-size:10px;color:var(--t3);margin-top:6px;font-family:var(--mono)" id="diffDisp">—</div>
+  </div>
+
+  <!-- Literal headcount ratio -->
+  <div class="card">
+    <div class="ctitle" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Patient ratios — head-to-head</span>
+      <span style="font-size:9px;color:var(--t3);text-transform:none;letter-spacing:0;font-family:var(--mono)">target 4:1 · max 5:1</span>
+    </div>
+    <div class="hcr-row">
+      <div class="hcr-cell">
+        <div class="hcr-lbl">Patients per RN</div>
+        <div class="hcr-num" id="hcrPpr">—</div>
+        <div class="hcr-unit">literal headcount</div>
+        <div class="hcr-status" id="hcrPprStatus">—</div>
+      </div>
+      <div class="hcr-cell">
+        <div class="hcr-lbl">APE per RN</div>
+        <div class="hcr-num" id="hcrApe">—</div>
+        <div class="hcr-unit">acuity-weighted</div>
+        <div class="hcr-status" id="hcrApeStatus">—</div>
+      </div>
+    </div>
+    <div class="hcr-divergence" id="hcrDiv" style="display:none"></div>
   </div>
 
   <!-- Support staff -->
@@ -424,6 +696,97 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
     <div id="scenarios"></div>
   </div>
 
+  <!-- Productivity score -->
+  <div class="card">
+    <div class="ctitle" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Productivity · per-period staffing</span>
+      <span id="prodElapsed" style="font-size:9px;color:var(--t3);text-transform:none;letter-spacing:0;font-family:var(--mono)">—</span>
+    </div>
+    <div class="prod-score-row">
+      <div class="prod-num" id="prodNum">—</div>
+      <div class="prod-status" id="prodStatus">—</div>
+      <div class="prod-target">
+        <div>target</div>
+        <div class="prod-target-num">3.20</div>
+      </div>
+    </div>
+    <div class="prod-bar">
+      <div class="prod-bar-fill" id="prodBarFill" style="width:0%"></div>
+      <div class="prod-bar-target" id="prodBarTarget" style="left:0%"></div>
+    </div>
+    <div class="prod-bar-zones">
+      <span style="color:var(--green)">at/below 3.20</span>
+      <span>3.20 target</span>
+      <span style="color:var(--red)">above 3.20</span>
+    </div>
+
+    <div class="pg-wrap">
+      <table class="pg-table" id="pgTable">
+        <thead>
+          <tr id="pgHeaderRow">
+            <th style="text-align:left;padding-left:8px">Role</th>
+            <th data-period="0">00–03<br><span style="font-weight:400;color:var(--t3)">3 hr</span></th>
+            <th data-period="1">03–07<br><span style="font-weight:400;color:var(--t3)">4 hr</span></th>
+            <th data-period="2">07–11<br><span style="font-weight:400;color:var(--t3)">4 hr</span></th>
+            <th data-period="3">11–15<br><span style="font-weight:400;color:var(--t3)">4 hr</span></th>
+            <th data-period="4">15–19<br><span style="font-weight:400;color:var(--t3)">4 hr</span></th>
+            <th data-period="5">19–00<br><span style="font-weight:400;color:var(--t3)">5 hr</span></th>
+          </tr>
+        </thead>
+        <tbody id="pgBody"></tbody>
+      </table>
+    </div>
+    <div class="pg-help">
+      Yellow = current period · Filled = completed periods · Faded = future<br>
+      Match the daily file's yellow boxes. Cumulative arrivals fill <em>through</em> the period (e.g., 67 in 03–07 means 67 total since midnight by 07:00).
+    </div>
+
+    <div class="sc-wrap">
+      <div class="sc-cell">
+        <div class="sc-title">3-hour calc</div>
+        <div class="sc-row"><label>Worked 3 hr</label><input type="number" min="0" step="1" id="sc3_3" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 2 hr</label><input type="number" min="0" step="1" id="sc3_2" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 1 hr</label><input type="number" min="0" step="1" id="sc3_1" value="0" oninput="calcStaff()"></div>
+        <div class="sc-result">
+          <div class="sc-result-lbl">Enter for 00–03</div>
+          <div class="sc-result-val" id="sc3_result">0.00</div>
+        </div>
+      </div>
+      <div class="sc-cell">
+        <div class="sc-title">4-hour calc</div>
+        <div class="sc-row"><label>Worked 4 hr</label><input type="number" min="0" step="1" id="sc4_4" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 3 hr</label><input type="number" min="0" step="1" id="sc4_3" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 2 hr</label><input type="number" min="0" step="1" id="sc4_2" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 1 hr</label><input type="number" min="0" step="1" id="sc4_1" value="0" oninput="calcStaff()"></div>
+        <div class="sc-result">
+          <div class="sc-result-lbl">Enter for 03–07 / 07–11 / 11–15 / 15–19</div>
+          <div class="sc-result-val" id="sc4_result">0.00</div>
+        </div>
+      </div>
+      <div class="sc-cell">
+        <div class="sc-title">5-hour calc</div>
+        <div class="sc-row"><label>Worked 5 hr</label><input type="number" min="0" step="1" id="sc5_5" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 4 hr</label><input type="number" min="0" step="1" id="sc5_4" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 3 hr</label><input type="number" min="0" step="1" id="sc5_3" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 2 hr</label><input type="number" min="0" step="1" id="sc5_2" value="0" oninput="calcStaff()"></div>
+        <div class="sc-row"><label>Worked 1 hr</label><input type="number" min="0" step="1" id="sc5_1" value="0" oninput="calcStaff()"></div>
+        <div class="sc-result">
+          <div class="sc-result-lbl">Enter for 19–00</div>
+          <div class="sc-result-val" id="sc5_result">0.00</div>
+        </div>
+      </div>
+    </div>
+    <div class="sc-help">
+      Counts how partial-shift staff convert to the productivity grid number. Same math as the April daily file.
+    </div>
+
+    <div class="prod-detail" id="prodDetail">—</div>
+    <div class="prod-flex-hint" id="prodHint" style="display:none"></div>
+    <div style="margin-top:10px;display:flex;justify-content:flex-end">
+      <button onclick="exportToExcel()" style="font-size:11px;padding:6px 12px">📊 Export day to Excel</button>
+    </div>
+  </div>
+
   <!-- Shift log (q3h) -->
   <div class="card">
     <div class="ctitle" style="display:flex;justify-content:space-between;align-items:center">
@@ -433,6 +796,7 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
     <div id="logList"></div>
     <div class="log-foot" id="logFoot" style="display:none">
       <button onclick="copyShiftSummary()">📋 Copy summary</button>
+      <button onclick="exportToExcel()">📊 Export Excel</button>
       <button class="danger" onclick="resetShift()">Reset shift</button>
     </div>
   </div>
@@ -441,17 +805,26 @@ body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px
 </div>
 
 <div class="footer">
-  APE: ESI 1=5× · ESI 2=2× · ESI 3=1.5× · ESI 4=1× · ESI 5=0.6× · Boarder +0.5× · Sitters 1:1 required · Arrival forecast: Epic SBH actual data n=19,746 · WR projection uses median acuity-to-APE conversion
+  APE: ESI 1=4.25× · ESI 2=1.5× · ESI 3=1.05× · ESI 4=0.85× · ESI 5=0.5× · Boarder by destination: ICU+1.25 · PCU/IMCU/Peds+0.85 · Ortho/Surg/Med+0.4 · Sitters 1:1 required · Arrival forecast: 2025 Bend ED data n=43,522 (294 days, day-of-week + month adjusted)
 </div>
 
 <div class="toast" id="toast">Snapshot logged</div>
 
 <script>
-const APCT=[0.4886,0.4339,0.3525,0.3415,0.2978,0.3294,0.4376,0.6211,
-            0.9395,1.2726,1.4233,1.4950,1.4670,1.4537,1.4573,1.4476,
-            1.3710,1.4853,1.3953,1.4646,1.3418,1.1146,0.9237,0.6454];
+// Arrival distribution from 2025 Bend ED Epic data (n=43,522 across 294 days,
+// 10 months: Jan-Mar + Jun-Dec). Hourly avg arrivals. Apr/May not yet sampled.
+const APCT=[3.1769,2.6224,2.2483,2.2109,2.0578,2.1497,2.7721,3.9558,
+            5.8503,7.8129,9.3095,9.9252,9.3878,9.1837,9.1905,8.8605,
+            8.9116,8.6939,8.6599,8.6156,7.3129,6.0748,5.0952,3.9558];
 const ASUM=APCT.reduce((a,b)=>a+b,0);
-const W={1:5,2:2,3:1.5,4:1,5:.6,b:.5};
+// Day-of-week multipliers (Sunday=0 ... Saturday=6). Mon busiest, Sun lightest.
+const DOW_MULT=[0.934,1.054,1.022,1.000,1.015,1.013,0.964];
+// Month multipliers (1=Jan ... 12=Dec). Apr/May = 1.0 (not yet sampled).
+const MONTH_MULT=[1.003,0.963,0.991,1.000,1.000,1.049,1.079,1.044,0.973,0.962,0.961,0.956];
+const W={1:4.25,2:1.5,3:1.05,4:.85,5:.5};
+// Boarder weights by destination unit (additive on top of ESI weight)
+const BW={icu:1.25,pcu:0.85,imcu:0.85,peds:0.85,ortho:0.4,surg:0.4,med:0.4};
+const BD_LABELS={icu:'ICU',pcu:'PCU',imcu:'IMCU',peds:'Peds',ortho:'Ortho/Neuro',surg:'Surgical',med:'Medical'};
 const g=id=>document.getElementById(id);
 const n=(x,d=1)=>+x.toFixed(d);
 const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
@@ -459,7 +832,197 @@ const HR=['12a','1a','2a','3a','4a','5a','6a','7a','8a','9a','10a','11a',
           '12p','1p','2p','3p','4p','5p','6p','7p','8p','9p','10p','11p'];
 let curHr=new Date().getHours();
 
-// ═══ Q3H Shift logging ═══
+// ═══ Firebase live-sync module ═══
+// Anonymous shared state across all charges using the same URL.
+// Numeric inputs sync; notes and shift log stay strictly local.
+// Falls back to localStorage-only behavior if Firebase is unreachable.
+const SYNC_FIELDS = [
+  // ESI counts
+  'e1','e2','e3','e4','e5',
+  // Boarders by destination
+  'bdIcu','bdPcu','bdImcu','bdPeds','bdOrtho','bdSurg','bdMed',
+  // Waiting room
+  'wr12','wr3','wr45','wru',
+  // RN roster
+  'rnTotal','rnCharge','rnTriage','rnTrauma','rnBreak','rnRme','rnFast',
+  // FAST/RME patients
+  'frPts',
+  // Support staff
+  'sitp','sits','techs',
+];
+// Productivity grid cells: pg_<role>_<period> for staff, pg_arr_<period> for arrivals
+const SYNC_PG_ROLES = ['rn','tech','us','sit','ori'];
+const SYNC_PG_PERIODS = [0,1,2,3,4,5];
+
+const sync = {
+  enabled: false,        // Firebase initialized successfully
+  docRef: null,          // Firestore document reference for today
+  unsubscribe: null,     // Listener cleanup function
+  status: 'init',        // 'init' | 'live' | 'writing' | 'offline' | 'error'
+  lastWriteAt: 0,        // Timestamp of our last own write (to ignore echo)
+  lastWriteValues: {},   // Values we just wrote (used to suppress echo)
+  pushTimer: null,       // Debounce timer for outgoing writes
+  applyingRemote: false, // True while applying a remote update (suppresses pushSync)
+  todayKey: '',          // 'YYYY-MM-DD'
+};
+
+function todayDateKey(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function setSyncStatus(s, text){
+  sync.status = s;
+  const el = g('syncStatus');
+  if(!el) return;
+  el.className = 'sync-status sync-' + s;
+  g('syncText').textContent = text || s;
+}
+
+// Read all sync-tracked fields from the DOM into a flat object
+function readSyncState(){
+  const state = {};
+  SYNC_FIELDS.forEach(id => {
+    const el = g(id);
+    if(el) state[id] = (el.value === '' ? 0 : (parseFloat(el.value) || 0));
+  });
+  // Productivity grid
+  SYNC_PG_ROLES.forEach(r => {
+    SYNC_PG_PERIODS.forEach(p => {
+      const id = `pg_${r}_${p}`;
+      const el = g(id);
+      if(el) state[id] = (el.value === '' ? 0 : (parseFloat(el.value) || 0));
+    });
+  });
+  SYNC_PG_PERIODS.forEach(p => {
+    const id = `pg_arr_${p}`;
+    const el = g(id);
+    if(el) state[id] = (el.value === '' ? 0 : (parseInt(el.value) || 0));
+  });
+  return state;
+}
+
+// Apply a remote state object to the DOM, then trigger go() once
+function applySyncState(state){
+  if(!state) return;
+  sync.applyingRemote = true;
+  try {
+    Object.keys(state).forEach(id => {
+      if(id === 'lastUpdated' || id === 'date') return;
+      const el = g(id);
+      if(el && el.value != state[id]){
+        el.value = state[id];
+      }
+    });
+  } finally {
+    // Defer the go() call so all DOM updates are settled
+    setTimeout(() => {
+      sync.applyingRemote = false;
+      if(typeof go === 'function') go();
+    }, 0);
+  }
+}
+
+// Push current state to Firestore (debounced)
+function pushSync(){
+  if(!sync.enabled || !sync.docRef || sync.applyingRemote) return;
+  if(sync.pushTimer) clearTimeout(sync.pushTimer);
+  sync.pushTimer = setTimeout(async () => {
+    try {
+      setSyncStatus('writing', 'syncing');
+      const state = readSyncState();
+      sync.lastWriteValues = {...state};
+      sync.lastWriteAt = Date.now();
+      await window._fb.setDoc(sync.docRef, {
+        ...state,
+        date: sync.todayKey,
+        lastUpdated: window._fb.serverTimestamp(),
+      }, { merge: true });
+      // After successful write, fall back to live state (listener may already update)
+      setTimeout(() => {
+        if(sync.status === 'writing') setSyncStatus('live', 'live');
+      }, 200);
+    } catch(err) {
+      console.warn('Sync write failed:', err);
+      setSyncStatus('error', 'sync error');
+    }
+  }, 400);
+}
+
+// Compare incoming state to what we just wrote — if they match, this is just
+// our own write echoing back via the listener; ignore.
+function isOwnEcho(incoming){
+  // Echo is most likely if write happened within 1.5 seconds
+  if(Date.now() - sync.lastWriteAt > 1500) return false;
+  let matches = 0, total = 0;
+  Object.keys(sync.lastWriteValues).forEach(k => {
+    total++;
+    if(sync.lastWriteValues[k] == incoming[k]) matches++;
+  });
+  return total > 0 && matches === total;
+}
+
+function initSync(){
+  // Wait for Firebase init via event or check window._fb directly
+  if(window._fb && window._fb.ready){
+    startSync();
+  } else if(window._fb && window._fb.error){
+    setSyncStatus('offline', 'offline (local only)');
+  } else {
+    // Hasn't initialized yet — wait for the event
+    window.addEventListener('firebase-ready', startSync, { once: true });
+    window.addEventListener('firebase-failed', () => {
+      setSyncStatus('offline', 'offline (local only)');
+    }, { once: true });
+    // Safety timeout: if nothing fires in 5 seconds, assume offline
+    setTimeout(() => {
+      if(sync.status === 'init'){
+        setSyncStatus('offline', 'offline (local only)');
+      }
+    }, 5000);
+  }
+}
+
+function startSync(){
+  try {
+    sync.todayKey = todayDateKey();
+    sync.docRef = window._fb.doc(window._fb.db, 'days', sync.todayKey);
+    sync.enabled = true;
+    setSyncStatus('live', 'live');
+    // Subscribe to remote changes
+    sync.unsubscribe = window._fb.onSnapshot(sync.docRef, (snap) => {
+      if(!snap.exists()){
+        // No document for today yet — the first charge to type creates it
+        return;
+      }
+      const data = snap.data();
+      if(isOwnEcho(data)){
+        // Our own write echoing back — ignore
+        return;
+      }
+      applySyncState(data);
+    }, (err) => {
+      console.warn('Sync listener error:', err);
+      setSyncStatus('error', 'sync error');
+    });
+  } catch(err) {
+    console.warn('startSync failed:', err);
+    setSyncStatus('offline', 'offline (local only)');
+  }
+}
+
+// Day rollover check — every minute, see if the date changed
+setInterval(() => {
+  if(!sync.enabled) return;
+  const newKey = todayDateKey();
+  if(newKey !== sync.todayKey){
+    // Day rolled over — switch to tomorrow's doc
+    if(sync.unsubscribe) sync.unsubscribe();
+    startSync();
+  }
+}, 60000);
+
+
 const STORAGE_KEY='bended_charge_shift_v1';
 const Q3H_MS=3*60*60*1000;
 const SHIFT_MAX_MS=14*60*60*1000;
@@ -483,10 +1046,57 @@ function saveShift(){
 }
 
 function adj(id,d){const el=g(id);el.value=clamp((parseInt(el.value)||0)+d,0,99);go();}
+function adjFloat(id,d){const el=g(id);const v=(parseFloat(el.value)||0)+d;el.value=Math.max(0,Math.min(99,v)).toFixed(2);go();}
 
-function ape(e1,e2,e3,e4,e5,bd){return e1*W[1]+e2*W[2]+e3*W[3]+e4*W[4]+e5*W[5]+bd*W.b;}
+// Staffing calculators — mirror April spreadsheet formulas exactly.
+//   3h calc (L12): (3hr_staff × 0.75) + (2hr_staff × 0.5) + (1hr_staff × 0.25)
+//   4h calc (P12): 4hr_staff + (3hr_staff × 0.75) + (2hr_staff × 0.5) + (1hr_staff × 0.25)
+//   5h calc (T13): (5hr_staff × 1.25) + 4hr_staff + (3hr_staff × 0.75) + (2hr_staff × 0.5) + (1hr_staff × 0.25)
+function calcStaff(){
+  const f = id => parseFloat(g(id).value) || 0;
+  const c3 = f('sc3_3')*0.75 + f('sc3_2')*0.5 + f('sc3_1')*0.25;
+  const c4 = f('sc4_4')*1.0 + f('sc4_3')*0.75 + f('sc4_2')*0.5 + f('sc4_1')*0.25;
+  const c5 = f('sc5_5')*1.25 + f('sc5_4')*1.0 + f('sc5_3')*0.75 + f('sc5_2')*0.5 + f('sc5_1')*0.25;
+  g('sc3_result').textContent = c3.toFixed(2);
+  g('sc4_result').textContent = c4.toFixed(2);
+  g('sc5_result').textContent = c5.toFixed(2);
+}
 
-// Break/floater coverage rule (matched to Bend ED policy):
+function ape(e1,e2,e3,e4,e5,bd){return e1*W[1]+e2*W[2]+e3*W[3]+e4*W[4]+e5*W[5]+bd;}
+
+// Compute total APE contribution from boarders given per-destination counts.
+// `b` is an object like {icu:2,pcu:1,...} OR (legacy) a number — for old shift-log
+// snapshots where boarders were a single count, we treat them as Medical-equivalent.
+function boarderApe(b){
+  if(typeof b==='number') return b*0.5; // legacy snapshot — old +0.5 weight
+  if(!b) return 0;
+  let total=0;
+  for(const k in BW){ total+=(b[k]||0)*BW[k]; }
+  return total;
+}
+function boarderCount(b){
+  if(typeof b==='number') return b;
+  if(!b) return 0;
+  let total=0;
+  for(const k in BW){ total+=(b[k]||0); }
+  return total;
+}
+// Boarder headcount adjustment — captures capacity consumption beyond the raw
+// 1-patient count. Each boarder is already counted once as their ESI; this
+// adds the extra "ED slots" they consume based on the destination unit's ratio.
+//   ICU (1:1):           +3 per boarder   (1 ICU patient consumes 4 ED slots, already counted as 1)
+//   PCU/IMCU/Peds (3:1): +0.33 per boarder (consumes ~1.33 slots, already counted as 1)
+//   Ortho/Surg/Med (4:1): +0 per boarder  (matches ED ratio, no adjustment)
+const BHA={icu:3,pcu:0.33,imcu:0.33,peds:0.33,ortho:0,surg:0,med:0};
+function boarderHeadcountAdj(b){
+  if(typeof b==='number') return 0; // legacy: no adjustment, weight already conservative
+  if(!b) return 0;
+  let total=0;
+  for(const k in BHA){ total+=(b[k]||0)*BHA[k]; }
+  return total;
+}
+
+// Break/resource coverage rule (matched to Bend ED policy):
 //   Standard breaks:   45 min lunch + 2×15 min = 75 min relief per RN  →  1 break per ~8 assignable
 //   Compressed breaks: 30 min lunch + 2×15 min = 60 min relief per RN  →  1 break per ~10 assignable
 //   Small floor (<6 assignable): no formal break coverage requirement
@@ -505,11 +1115,47 @@ function collectInputs(){
   const rnTriage=+g('rnTriage').value||0;
   const rnTrauma=+g('rnTrauma').value||0;
   const rnBreak=+g('rnBreak').value||0;
-  const rn=Math.max(1,rnTotal-rnCharge-rnTriage-rnTrauma-rnBreak);
+  const rnRme=+g('rnRme').value||0;
+  const rnFast=+g('rnFast').value||0;
+  const rn=Math.max(1,rnTotal-rnCharge-rnTriage-rnTrauma-rnBreak-rnRme-rnFast);
+  const bd={
+    icu:+g('bdIcu').value||0,
+    pcu:+g('bdPcu').value||0,
+    imcu:+g('bdImcu').value||0,
+    peds:+g('bdPeds').value||0,
+    ortho:+g('bdOrtho').value||0,
+    surg:+g('bdSurg').value||0,
+    med:+g('bdMed').value||0,
+  };
+  // FAST/RME patients — single combined input. The two workflows share RME
+  // physical spaces and can't be split from the floor view. Auto-fill on first
+  // staffing transition: total expected capacity = FAST × 4 + RME × 3.
+  // Charge can edit freely after that, including down to zero.
+  if(typeof window._frPrev === 'undefined') window._frPrev = {fastRn:0, rmeRn:0};
+  const e1=+g('e1').value||0, e2=+g('e2').value||0, e3=+g('e3').value||0;
+  const e4=+g('e4').value||0, e5=+g('e5').value||0;
+  const totalEsi = e1+e2+e3+e4+e5;
+  let frPts=+g('frPts').value||0;
+  // Auto-fill when FAST or RME RN count transitions from 0 → N
+  if((rnFast > 0 && window._frPrev.fastRn === 0) ||
+     (rnRme > 0 && window._frPrev.rmeRn === 0)){
+    const expected = rnFast*4 + rnRme*3;
+    if(expected > frPts){
+      frPts = expected;
+      g('frPts').value = frPts;
+    }
+  }
+  window._frPrev.fastRn = rnFast;
+  window._frPrev.rmeRn = rnRme;
+  // Clamp: can't subtract more patients than total ESI count
+  if(frPts > totalEsi){
+    frPts = totalEsi;
+    g('frPts').value = frPts;
+  }
   return {
-    e1:+g('e1').value||0,e2:+g('e2').value||0,e3:+g('e3').value||0,
-    e4:+g('e4').value||0,e5:+g('e5').value||0,bd:+g('bd').value||0,
-    rnTotal,rnCharge,rnTriage,rnTrauma,rnBreak,rn,
+    e1,e2,e3,e4,e5,bd,
+    rnTotal,rnCharge,rnTriage,rnTrauma,rnBreak,rnRme,rnFast,rn,
+    frPts,
     wr12:+g('wr12').value||0,wr3:+g('wr3').value||0,wr45:+g('wr45').value||0,wru:+g('wru').value||0,
     sitp:+g('sitp').value||0,sits:+g('sits').value||0,techs:+g('techs').value||0
   };
@@ -518,20 +1164,41 @@ function collectInputs(){
 function metricsFor(inputs,breakMode){
   const i=inputs;
   const bm=breakMode||'standard';
-  const totalPts=i.e1+i.e2+i.e3+i.e4+i.e5;
-  const totalApe=ape(i.e1,i.e2,i.e3,i.e4,i.e5,i.bd);
-  const apeRn=totalApe/Math.max(1,i.rn);
+  const totalPtsAll=i.e1+i.e2+i.e3+i.e4+i.e5;
+  const bdApe=boarderApe(i.bd);
+  const bdCount=boarderCount(i.bd);
+  const bdHeadAdj=boarderHeadcountAdj(i.bd);
+  // FAST/RME subtraction — these patients are part of the ESI count above but
+  // are NOT on the main floor's RN assignment. Subtract them so main-floor math
+  // reflects only patients assigned to main ED RNs.
+  // APE estimate: 1.05 per patient (~ESI 3 mid-acuity) since FAST and RME mix
+  // can't be separately observed from the floor.
+  const frPts=i.frPts||0;
+  const frApeSubtract=frPts*1.05;
+  // Main-floor patient count = ESI total minus FAST/RME
+  const totalPts=Math.max(0,totalPtsAll-frPts);
+  // Effective headcount = main-floor pts + boarder ratio adjustment
+  // (boarders are by definition on main floor, not FAST/RME)
+  const totalPtsEff=totalPts+bdHeadAdj;
+  const totalApeAll=ape(i.e1,i.e2,i.e3,i.e4,i.e5,bdApe);
+  const totalApe=Math.max(0,totalApeAll-frApeSubtract);
+  const rnSafe=Math.max(1,i.rn);
+  const apeRn=totalApe/rnSafe;
   const rec=Math.ceil(totalApe/4.0);
   const recMax=Math.ceil(totalApe/5.5);
   const wrTotal=i.wr12+i.wr3+i.wr45+i.wru;
   const diff=i.rn-rec;
   let key='optimal';
-  if(i.rn<recMax) key='callIn';
-  else if(diff>2) key='flex';
-  else if(diff>0) key='hold';
-  else if(diff<0) key='watch';
+  let flexCount=0;
+  if(apeRn>5.5) key='callIn';
+  else if(apeRn>4.0) key='watch';
+  else {
+    let testRn=i.rn-1;
+    while(testRn>=1 && totalApe/testRn<=4.0){ flexCount++; testRn--; }
+    if(flexCount>0) key='flex';
+  }
   const bc=breakCoverage(i.rn,i.rnBreak||0,bm);
-  return {totalPts,totalApe,apeRn,rec,recMax,wrTotal,diff,key,bc,breakMode:bm};
+  return {totalPts,totalPtsAll,totalPtsEff,bdHeadAdj,totalApe,totalApeAll,apeRn,rec,recMax,wrTotal,diff,key,bc,breakMode:bm,flexCount,bdApe,bdCount,frPts};
 }
 
 function setBreakMode(mode){
@@ -539,6 +1206,146 @@ function setBreakMode(mode){
   if(!shift.startTime) shift.startTime=Date.now();
   saveShift();
   go();
+}
+
+// Bend ED productivity — per-period grid (mirrors daily file format).
+//   6 periods: 00-03 (3h), 03-07 (4h), 07-11 (4h), 11-15 (4h), 15-19 (4h), 19-00 (5h)
+//   5 staff roles per period: RN, Tech, US, Sitter, Orientation
+//   Hours per period = staff_count × period_length
+//   Cumulative arrivals per period = total since midnight through end of that period
+//   Productivity (cumulative through period N) = sum(hours, periods 0..N) / arrivals through N
+//   ED Equivalents prorated at 18/day to match leadership reporting
+const FIXED_DAILY_HRS = 15.42;     // Director (5.71) + Manager (5.71) + AA (4)
+const EXPECTED_EQV_PER_DAY = 18;    // expected boarder-transfer credit per 24 hr
+const TARGET_UOS = 3.20;
+const PERIODS = [
+  { id:0, label:'00-03', start:0,  end:3,  hours:3 },
+  { id:1, label:'03-07', start:3,  end:7,  hours:4 },
+  { id:2, label:'07-11', start:7,  end:11, hours:4 },
+  { id:3, label:'11-15', start:11, end:15, hours:4 },
+  { id:4, label:'15-19', start:15, end:19, hours:4 },
+  { id:5, label:'19-00', start:19, end:24, hours:5 },
+];
+const PG_ROLES = [
+  { key:'rn',   label:'RN' },
+  { key:'tech', label:'ED Tech' },
+  { key:'us',   label:'US' },
+  { key:'sit',  label:'Sitter' },
+  { key:'ori',  label:'Ori/Mtg/Edu' },
+];
+
+// Returns the period index for a given decimal hour-of-day (0-23.99...)
+function getCurrentPeriod(hourOfDay){
+  for(let i=0;i<PERIODS.length;i++){
+    if(hourOfDay >= PERIODS[i].start && hourOfDay < PERIODS[i].end) return i;
+  }
+  return PERIODS.length-1;
+}
+
+// Build the period grid HTML and wire inputs to recalc on change
+function buildPeriodGrid(){
+  const tbody = g('pgBody');
+  if(!tbody) return;
+  let html = '';
+  // One row per role
+  PG_ROLES.forEach(r => {
+    html += `<tr data-role="${r.key}">
+      <td class="pg-rolelbl">${r.label}</td>`;
+    PERIODS.forEach(p => {
+      html += `<td data-period="${p.id}">
+        <input type="number" min="0" step="0.25" class="pg-input"
+          id="pg_${r.key}_${p.id}" value="0"
+          oninput="go()" />
+      </td>`;
+    });
+    html += `</tr>`;
+  });
+  // Cumulative arrivals row
+  html += `<tr class="pg-arr-row" data-role="arr">
+    <td class="pg-rolelbl">Cum. arrivals</td>`;
+  PERIODS.forEach(p => {
+    html += `<td data-period="${p.id}">
+      <input type="number" min="0" step="1" class="pg-arr-input"
+        id="pg_arr_${p.id}" value="0"
+        oninput="go()" />
+    </td>`;
+  });
+  html += `</tr>`;
+  // Per-period UOS row (computed)
+  html += `<tr class="pg-uos-row" data-role="uos">
+    <td class="pg-rolelbl">UOS thru</td>`;
+  PERIODS.forEach(p => {
+    html += `<td data-period="${p.id}" id="pgUos_${p.id}">—</td>`;
+  });
+  html += `</tr>`;
+  tbody.innerHTML = html;
+}
+
+// Read all cells, compute cumulative hours/arrivals per period, return summary
+function computeProductivityGrid(currentPeriodIdx){
+  // Read staff per period
+  const staff = {};
+  PG_ROLES.forEach(r => {
+    staff[r.key] = PERIODS.map(p => {
+      const el = g(`pg_${r.key}_${p.id}`);
+      return el ? Math.max(0, parseFloat(el.value)||0) : 0;
+    });
+  });
+  // Read arrivals per period
+  const arrivals = PERIODS.map(p => {
+    const el = g(`pg_arr_${p.id}`);
+    return el ? Math.max(0, parseInt(el.value)||0) : 0;
+  });
+  // Hours per period (sum across roles × period length)
+  const periodHrs = PERIODS.map((p,i) => {
+    let total = 0;
+    PG_ROLES.forEach(r => { total += staff[r.key][i] * p.hours; });
+    return total;
+  });
+  // Cumulative hours per period — staff worked hours only (matches spreadsheet's
+  // per-period Total Worked Hours formula; the spreadsheet lists fixed Director/Mgr/AA
+  // hours as reference but doesn't include them in the daily productivity calc)
+  const cumHrs = [];
+  let runningHrs = 0;
+  PERIODS.forEach((p,i) => {
+    runningHrs += periodHrs[i];
+    cumHrs.push(runningHrs);
+  });
+  // Per-period UOS computation (cumulative through the period)
+  // Denominator = cumulative arrivals + prorated boarder credit (~18/day baseline)
+  const periodUos = PERIODS.map((p,i) => {
+    const arrThru = arrivals[i];
+    if(arrThru === 0) return null;
+    const projEqv = EXPECTED_EQV_PER_DAY * (p.end/24);
+    const totalUos = arrThru + projEqv;
+    if(totalUos <= 0) return null;
+    return cumHrs[i] / totalUos;
+  });
+  // Snapshot at current period (or last filled)
+  // Pick the latest period that has any data entered
+  let displayPeriodIdx = -1;
+  for(let i=PERIODS.length-1;i>=0;i--){
+    if(periodHrs[i] > 0 || arrivals[i] > 0){ displayPeriodIdx = i; break; }
+  }
+  // If nothing entered, fall back to current period index
+  if(displayPeriodIdx < 0) displayPeriodIdx = currentPeriodIdx;
+  const cur = {
+    periodIdx: displayPeriodIdx,
+    cumHrs: cumHrs[displayPeriodIdx] || 0,
+    arrivals: arrivals[displayPeriodIdx] || 0,
+    projEqv: EXPECTED_EQV_PER_DAY * (PERIODS[displayPeriodIdx].end/24),
+    uos: periodUos[displayPeriodIdx],
+  };
+  // If the current period has no data but earlier periods do, the displayPeriodIdx
+  // already handled that case. If the user is partway through a period, we still use
+  // its cumulative figure as the latest reading.
+  let status='good';
+  if(cur.uos == null) status='empty';
+  else if(cur.uos<=3.0) status='efficient';
+  else if(cur.uos<=TARGET_UOS) status='good';
+  else if(cur.uos<=3.54) status='watch';
+  else status='over';
+  return { staff, arrivals, periodHrs, cumHrs, periodUos, current: cur, status };
 }
 
 function logSnapshot(){
@@ -600,8 +1407,14 @@ function copyShiftSummary(){
     const total=i.rnTotal||i.rn;
     const bm=s.breakMode||'standard';
     lines.push(`[${fmtTime(s.t)}] ${m.totalPts} pts · APE ${n(m.totalApe,1)} · ${n(m.apeRn,2)}:1/RN · ${i.rn} assignable (${total} roster) · WR ${m.wrTotal} · ${keyLabel(m.key)}`);
-    lines.push(`   ESI 1-5: ${i.e1}/${i.e2}/${i.e3}/${i.e4}/${i.e5} + ${i.bd} board · WR: ${i.wr12}/${i.wr3}/${i.wr45}/${i.wru} · BH ${i.sits}/${i.sitp} · Tech ${i.techs}`);
-    if(i.rnTotal!==undefined) lines.push(`   Roster: ${i.rnTotal} total = ${i.rnCharge||0} charge + ${i.rnTriage||0} triage + ${i.rnTrauma||0} trauma + ${i.rnBreak||0} break + ${i.rn} assignable`);
+    const bdSummary=(()=>{
+      if(typeof i.bd==='number') return `${i.bd} board (legacy)`;
+      const parts=[];
+      for(const k in BW){ if((i.bd?.[k]||0)>0) parts.push(`${i.bd[k]} ${BD_LABELS[k]}`); }
+      return parts.length ? parts.join(', ') : '0 board';
+    })();
+    lines.push(`   ESI 1-5: ${i.e1}/${i.e2}/${i.e3}/${i.e4}/${i.e5} · Board: ${bdSummary} · WR: ${i.wr12}/${i.wr3}/${i.wr45}/${i.wru} · BH ${i.sits}/${i.sitp} · Tech ${i.techs}`);
+    if(i.rnTotal!==undefined) lines.push(`   Roster: ${i.rnTotal} total = ${i.rnCharge||0} charge + ${i.rnTriage||0} triage + ${i.rnTrauma||0} trauma + ${i.rnBreak||0} break${i.rnRme?' + '+i.rnRme+' RME':''}${i.rnFast?' + '+i.rnFast+' FAST':''} + ${i.rn} assignable`);
     if(m.bc&&m.bc.status!=='na'){
       const bcLabel=m.bc.status==='ok'?'adequate':m.bc.status==='short'?`${m.bc.delta} short`:`${m.bc.delta} surplus`;
       lines.push(`   Break coverage: ${i.rnBreak||0}/${m.bc.rec} ${bcLabel} · mode: ${bm} (${bm==='compressed'?'60':'75'} min)`);
@@ -619,8 +1432,214 @@ function fallbackCopy(text){
   const ta=document.createElement('textarea');
   ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
   document.body.appendChild(ta);ta.select();
-  try{document.execCommand('copy');toast('Summary copied');}catch(e){toast('Copy failed');}
-  document.body.removeChild(ta);
+  try{document.execCommand('copy');toast('Summary copied');}catch(e){toast('Copy failed');}  document.body.removeChild(ta);
+}
+
+// ── Export current day's productivity + shift log to Excel ──
+// Mirrors the Bend ED daily file layout: per-period staffing grid on one sheet,
+// shift log on a second sheet, summary on a third.
+function exportToExcel(){
+  if(typeof XLSX==='undefined'){
+    toast('Excel library not loaded — check internet connection');
+    return;
+  }
+  const now=new Date();
+  const dateStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const dateLong=now.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  const exportTimeLabel = fmtTime(now);
+
+  // ── Sheet 1: Productivity grid (mirrors April daily file) ──
+  // Read each cell of the per-period grid
+  const pgStaff={};
+  PG_ROLES.forEach(r=>{
+    pgStaff[r.key]=PERIODS.map(p=>{
+      const el=g(`pg_${r.key}_${p.id}`);
+      return el?Math.max(0,parseFloat(el.value)||0):0;
+    });
+  });
+  const pgArr=PERIODS.map(p=>{
+    const el=g(`pg_arr_${p.id}`);
+    return el?Math.max(0,parseInt(el.value)||0):0;
+  });
+  // Compute hours per period and cumulative + productivity per period
+  const periodHrs=PERIODS.map((p,i)=>{
+    let total=0;
+    PG_ROLES.forEach(r=>{ total+=pgStaff[r.key][i]*p.hours; });
+    return total;
+  });
+  let runningHrs=0;
+  const cumHrs=PERIODS.map((p,i)=>{ runningHrs+=periodHrs[i]; return runningHrs; });
+  const periodUos=PERIODS.map((p,i)=>{
+    const arr=pgArr[i];
+    if(arr===0) return null;
+    const projEqv=EXPECTED_EQV_PER_DAY*(p.end/24);
+    return cumHrs[i]/(arr+projEqv);
+  });
+
+  // Build the productivity sheet as 2D array
+  const prodAOA=[];
+  prodAOA.push(['St. Charles Bend Emergency Department']);
+  prodAOA.push(['ED Daily Productivity Report (Charge Flex Tool Export)']);
+  prodAOA.push(['Date:', dateLong, '', '', '', 'Snapshot at:', exportTimeLabel]);
+  prodAOA.push(['Exported at:', `${fmtTime(now)} (${now.toLocaleTimeString()})`]);
+  prodAOA.push([]);
+  // Period header row
+  prodAOA.push(['', '00-03', '03-07', '07-11', '11-15', '15-19', '19-00', 'TOTAL']);
+  prodAOA.push(['Period hours', 3, 4, 4, 4, 4, 5, 24]);
+  prodAOA.push([]);
+  prodAOA.push(['STAFFING (number of staff per period)']);
+  PG_ROLES.forEach(r=>{
+    const row=[r.label, ...pgStaff[r.key], ''];
+    prodAOA.push(row);
+  });
+  prodAOA.push([]);
+  prodAOA.push(['HOURS WORKED (staff × period hours)']);
+  PG_ROLES.forEach(r=>{
+    const hoursRow=[r.label, ...PERIODS.map((p,i)=>pgStaff[r.key][i]*p.hours)];
+    const total=hoursRow.slice(1).reduce((a,b)=>a+b,0);
+    hoursRow.push(total);
+    prodAOA.push(hoursRow);
+  });
+  const periodTotals=[...periodHrs, periodHrs.reduce((a,b)=>a+b,0)];
+  prodAOA.push(['Period total hrs', ...periodTotals]);
+  prodAOA.push(['Cumulative hrs', ...cumHrs, cumHrs[cumHrs.length-1]]);
+  prodAOA.push([]);
+  prodAOA.push(['ARRIVALS & PRODUCTIVITY']);
+  prodAOA.push(['Cumulative arrivals', ...pgArr, '']);
+  prodAOA.push(['Productivity (cum hrs / arrivals + eqv)',
+    ...periodUos.map(u=>u===null?'':+u.toFixed(2)), '']);
+  prodAOA.push(['Productivity goal', 3.20]);
+  prodAOA.push([]);
+  prodAOA.push(['Notes:']);
+  prodAOA.push(['• Numerator = cumulative staff hours through end of period']);
+  prodAOA.push(['• Denominator = cumulative arrivals + 18/day boarder credit (prorated by hour-of-day)']);
+  prodAOA.push(['• Daily file score may be ~0.3 higher (boarder credit not included until month-end)']);
+
+  const wsProd=XLSX.utils.aoa_to_sheet(prodAOA);
+  // Set column widths
+  wsProd['!cols']=[{wch:36},{wch:9},{wch:9},{wch:9},{wch:9},{wch:9},{wch:9},{wch:10}];
+
+  // ── Sheet 2: Shift log (q3h snapshots) ──
+  const logAOA=[];
+  logAOA.push(['Bend ED Charge Shift Log']);
+  logAOA.push(['Date:', dateLong, 'Snapshot at:', exportTimeLabel]);
+  logAOA.push(['Snapshots:', shift.snapshots.length]);
+  logAOA.push([]);
+  // Column headers
+  const logHeader=[
+    'Time', 'Tot pts (raw)', 'Tot pts (main flr)', 'ESI 1', 'ESI 2', 'ESI 3', 'ESI 4', 'ESI 5',
+    'FAST/RME pts',
+    'Bd ICU', 'Bd PCU', 'Bd IMCU', 'Bd Peds', 'Bd Ortho', 'Bd Surg', 'Bd Med',
+    'Bd ratio adj', 'Eff pts', 'Bd total APE',
+    'WR 1-2', 'WR 3', 'WR 4-5', 'WR untriaged', 'WR total',
+    'RN total', 'RN charge', 'RN triage', 'RN trauma', 'RN break',
+    'RN RME', 'RN FAST', 'RN assignable',
+    'BH sit pts', 'BH sit covg', 'ED Techs',
+    'Total APE (main flr)', 'APE/RN', 'PPR (eff/RN)', 'Recommended RN', 'Signal',
+    'Break mode', 'Break covg status',
+    'Note'
+  ];
+  logAOA.push(logHeader);
+  shift.snapshots.forEach(s=>{
+    const m=metricsFor(s.inputs,s.breakMode);
+    const i=s.inputs;
+    const ptsForPpr = m.totalPtsEff != null ? m.totalPtsEff : m.totalPts;
+    const ppr = i.rn>0 ? ptsForPpr/i.rn : 0;
+    // Boarder counts (handle legacy number format)
+    let bd_icu=0,bd_pcu=0,bd_imcu=0,bd_peds=0,bd_ortho=0,bd_surg=0,bd_med=0;
+    if(typeof i.bd==='number'){
+      bd_med=i.bd; // legacy: treat as Medical-equivalent
+    } else if(i.bd){
+      bd_icu=i.bd.icu||0;bd_pcu=i.bd.pcu||0;bd_imcu=i.bd.imcu||0;
+      bd_peds=i.bd.peds||0;bd_ortho=i.bd.ortho||0;bd_surg=i.bd.surg||0;bd_med=i.bd.med||0;
+    }
+    const bdAdj = m.bdHeadAdj || 0;
+    const wrTotal=i.wr12+i.wr3+i.wr45+i.wru;
+    const bcStatus=m.bc?(m.bc.status==='ok'?'adequate':m.bc.status==='short'?`${m.bc.delta} short`:m.bc.status==='surplus'?`${m.bc.delta} surplus`:'n/a'):'';
+    const totalPtsAll = m.totalPtsAll != null ? m.totalPtsAll : (i.e1+i.e2+i.e3+i.e4+i.e5);
+    logAOA.push([
+      fmtTime(s.t), totalPtsAll, m.totalPts, i.e1, i.e2, i.e3, i.e4, i.e5,
+      (i.frPts != null ? i.frPts : ((i.frFast||0)+(i.frRme||0))),
+      bd_icu, bd_pcu, bd_imcu, bd_peds, bd_ortho, bd_surg, bd_med,
+      +bdAdj.toFixed(2), +ptsForPpr.toFixed(2), +(m.bdApe||0).toFixed(2),
+      i.wr12, i.wr3, i.wr45, i.wru, wrTotal,
+      i.rnTotal||i.rn, i.rnCharge||0, i.rnTriage||0, i.rnTrauma||0, i.rnBreak||0,
+      i.rnRme||0, i.rnFast||0, i.rn,
+      i.sitp, i.sits, i.techs,
+      +m.totalApe.toFixed(2), +m.apeRn.toFixed(2), +ppr.toFixed(2), m.rec, keyLabel(m.key),
+      s.breakMode||'standard', bcStatus,
+      s.note||''
+    ]);
+  });
+  const wsLog=XLSX.utils.aoa_to_sheet(logAOA);
+  // Set widths for log
+  wsLog['!cols']=[
+    {wch:8},{wch:11},{wch:14},{wch:6},{wch:6},{wch:6},{wch:6},{wch:6},
+    {wch:13},
+    {wch:8},{wch:8},{wch:8},{wch:8},{wch:9},{wch:8},{wch:8},
+    {wch:11},{wch:9},{wch:13},
+    {wch:7},{wch:6},{wch:7},{wch:13},{wch:8},
+    {wch:9},{wch:10},{wch:10},{wch:10},{wch:9},
+    {wch:8},{wch:8},{wch:13},
+    {wch:10},{wch:10},{wch:9},
+    {wch:9},{wch:8},{wch:13},{wch:14},{wch:9},
+    {wch:11},{wch:18},
+    {wch:40}
+  ];
+
+  // ── Sheet 3: Summary ──
+  const sumAOA=[];
+  sumAOA.push(['Shift Summary']);
+  sumAOA.push(['Date', dateLong]);
+  sumAOA.push(['Export time', fmtTime(now)]);
+  sumAOA.push([]);
+  if(shift.snapshots.length>0){
+    const metricsAll=shift.snapshots.map(s=>metricsFor(s.inputs,s.breakMode));
+    const peakApe=Math.max(...metricsAll.map(m=>m.totalApe));
+    const peakApeRn=Math.max(...metricsAll.map(m=>m.apeRn));
+    const peakPts=Math.max(...metricsAll.map(m=>m.totalPts));
+    const minRn=Math.min(...shift.snapshots.map(s=>s.inputs.rn));
+    const maxRn=Math.max(...shift.snapshots.map(s=>s.inputs.rn));
+    const peakWr=Math.max(...metricsAll.map(m=>m.wrTotal));
+    sumAOA.push(['Snapshots taken', shift.snapshots.length]);
+    sumAOA.push(['Peak total APE', +peakApe.toFixed(1)]);
+    sumAOA.push(['Peak APE per RN', +peakApeRn.toFixed(2)]);
+    sumAOA.push(['Peak patients on floor', peakPts]);
+    sumAOA.push(['Min assignable RNs', minRn]);
+    sumAOA.push(['Max assignable RNs', maxRn]);
+    sumAOA.push(['Peak waiting room', peakWr]);
+  } else {
+    sumAOA.push(['No snapshots logged this shift']);
+  }
+  // Productivity end-of-day reading (last filled period)
+  let lastFilled=-1;
+  for(let i=PERIODS.length-1;i>=0;i--){
+    if(periodHrs[i]>0||pgArr[i]>0){lastFilled=i;break;}
+  }
+  if(lastFilled>=0){
+    sumAOA.push([]);
+    sumAOA.push(['PRODUCTIVITY (latest filled period)']);
+    sumAOA.push(['Period', PERIODS[lastFilled].label]);
+    sumAOA.push(['Cumulative hrs', +cumHrs[lastFilled].toFixed(1)]);
+    sumAOA.push(['Cumulative arrivals', pgArr[lastFilled]]);
+    if(periodUos[lastFilled]!==null){
+      sumAOA.push(['Productivity score', +periodUos[lastFilled].toFixed(2)]);
+      sumAOA.push(['Goal', 3.20]);
+      const delta=periodUos[lastFilled]-3.20;
+      sumAOA.push(['vs goal', (delta>0?'+':'')+delta.toFixed(2)+' '+(delta<=0?'(at/under)':'(over)')]);
+    }
+  }
+  const wsSum=XLSX.utils.aoa_to_sheet(sumAOA);
+  wsSum['!cols']=[{wch:30},{wch:25}];
+
+  // Build and download workbook
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsProd, 'Productivity');
+  XLSX.utils.book_append_sheet(wb, wsLog, 'Shift Log');
+  XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
+  const filename=`BendED_ChargeFlex_${dateStr}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  toast(`Exported ${filename}`);
 }
 
 function fmtTime(t){
@@ -728,7 +1747,7 @@ function renderLog(){
 
     const total=i.rnTotal||i.rn;
     const rosterLine=i.rnTotal!==undefined
-      ? `Roster: <span style="color:var(--t1)">${total}</span> total = ${i.rnCharge||0} charge + ${i.rnTriage||0} triage + ${i.rnTrauma||0} trauma + ${i.rnBreak||0} break → <span style="color:var(--t1)">${i.rn}</span> assignable<br>`
+      ? `Roster: <span style="color:var(--t1)">${total}</span> total = ${i.rnCharge||0} charge + ${i.rnTriage||0} triage + ${i.rnTrauma||0} trauma + ${i.rnBreak||0} break${i.rnRme?' + '+i.rnRme+' RME':''}${i.rnFast?' + '+i.rnFast+' FAST':''} → <span style="color:var(--t1)">${i.rn}</span> assignable${(i.frPts||((i.frFast||0)+(i.frRme||0)))?` · subtracted ${i.frPts!=null?i.frPts:((i.frFast||0)+(i.frRme||0))} FAST/RME pts`:''}<br>`
       : `Staffing: <span style="color:var(--t1)">${i.rn}</span> RN (legacy)<br>`;
     const bc=m.bc||{status:'na'};
     const bcColor=bc.status==='ok'?'var(--green)':bc.status==='short'?'var(--amber)':bc.status==='flex'?'var(--blue)':'var(--t3)';
@@ -738,9 +1757,17 @@ function renderLog(){
                 :'n/a';
     const bm=s.breakMode||'standard';
     const bcLine=i.rnTotal!==undefined?`Break coverage: <span style="color:${bcColor}">${bcText}</span> · mode <span style="color:var(--t1)">${bm}</span> (${bm==='compressed'?'60':'75'} min)<br>`:'';
+    const bdDetail=(()=>{
+      if(typeof i.bd==='number') return `<span style="color:var(--t1)">${i.bd}</span> boarders (legacy snapshot)`;
+      if(!i.bd) return '0 boarders';
+      const parts=[];
+      for(const k in BW){ if((i.bd[k]||0)>0) parts.push(`<span style="color:var(--t1)">${i.bd[k]}</span> ${BD_LABELS[k]}`); }
+      return parts.length ? parts.join(' · ') : '0 boarders';
+    })();
     const detail=`
       <div class="log-detail ${isOpen?'open':''}" id="det${idx}">
-        ESI 1–5: <span style="color:var(--t1)">${i.e1}/${i.e2}/${i.e3}/${i.e4}/${i.e5}</span> + ${i.bd} boarding<br>
+        ESI 1–5: <span style="color:var(--t1)">${i.e1}/${i.e2}/${i.e3}/${i.e4}/${i.e5}</span><br>
+        Boarders: ${bdDetail} (+${n(m.bdApe||0,1)} APE)<br>
         Waiting room: <span style="color:var(--t1)">${i.wr12}</span> ESI 1–2 · <span style="color:var(--t1)">${i.wr3}</span> ESI 3 · <span style="color:var(--t1)">${i.wr45}</span> ESI 4–5 · <span style="color:var(--t1)">${i.wru}</span> untriaged<br>
         ${rosterLine}
         ${bcLine}
@@ -758,7 +1785,7 @@ function renderLog(){
           <div class="log-time-rel">${fmtDur(since)} ago</div>
         </div>
         <div class="log-mid">
-          <div class="log-headline">${m.totalPts} pts · APE ${n(m.totalApe,1)} · <span style="color:${apeColor}">${n(m.apeRn,2)}:1</span><span class="log-key k-${m.key}">${keyLabel(m.key)}</span></div>
+          <div class="log-headline">${m.bdHeadAdj > 0 ? `${n(m.totalPtsEff,1)} eff (${m.totalPts} raw)` : `${m.totalPts} pts`} · APE ${n(m.totalApe,1)} · <span style="color:${apeColor}">${n(m.apeRn,2)}:1</span><span class="log-key k-${m.key}">${keyLabel(m.key)}</span></div>
           <div class="log-sub">${i.rn} assignable${i.rnTotal?` / ${i.rnTotal} roster`:''} · rec ${m.rec} · WR ${m.wrTotal} · BH ${i.sits}/${i.sitp}</div>
           ${noteHint}
         </div>
@@ -776,13 +1803,30 @@ function renderLog(){
 // ═══ Existing tool: live signal computation ═══
 function go(){
   const e1=+g('e1').value||0,e2=+g('e2').value||0,e3=+g('e3').value||0;
-  const e4=+g('e4').value||0,e5=+g('e5').value||0,bd=+g('bd').value||0;
+  const e4=+g('e4').value||0,e5=+g('e5').value||0;
+  const bdCounts={
+    icu:+g('bdIcu').value||0, pcu:+g('bdPcu').value||0, imcu:+g('bdImcu').value||0,
+    peds:+g('bdPeds').value||0,
+    ortho:+g('bdOrtho').value||0, surg:+g('bdSurg').value||0, med:+g('bdMed').value||0,
+  };
+  const bdApe=boarderApe(bdCounts);
+  const bdCount=boarderCount(bdCounts);
+  const bdHeadAdj=boarderHeadcountAdj(bdCounts);
+  // Boarder summary chip — show ratio adjustment when non-zero so charges see why
+  // headcount jumped (e.g., 1 ICU boarder = +3 to effective headcount)
+  if(bdHeadAdj > 0){
+    g('bdSum').textContent=`${bdCount} boarder${bdCount!==1?'s':''} · +${n(bdApe,1)} APE · +${n(bdHeadAdj,1)} hdct (ratio adj)`;
+  } else {
+    g('bdSum').textContent=`${bdCount} boarder${bdCount!==1?'s':''} · +${n(bdApe,1)} APE`;
+  }
   const rnTotal=+g('rnTotal').value||0;
   const rnCharge=+g('rnCharge').value||0;
   const rnTriage=+g('rnTriage').value||0;
   const rnTrauma=+g('rnTrauma').value||0;
   const rnBreak=+g('rnBreak').value||0;
-  const rnNonAssign=rnCharge+rnTriage+rnTrauma+rnBreak;
+  const rnRme=+g('rnRme').value||0;
+  const rnFast=+g('rnFast').value||0;
+  const rnNonAssign=rnCharge+rnTriage+rnTrauma+rnBreak+rnRme+rnFast;
   const rn=Math.max(1,rnTotal-rnNonAssign);
   // Update the staffing card derived display + warning
   g('rnAssignable').textContent=rn;
@@ -799,45 +1843,207 @@ function go(){
   }
   const wr12=+g('wr12').value||0,wr3=+g('wr3').value||0,wr45=+g('wr45').value||0,wru=+g('wru').value||0;
   const sitp=+g('sitp').value||0,sits=+g('sits').value||0,techs=+g('techs').value||0;
-  const totalPts=e1+e2+e3+e4+e5;
-  const totalApe=ape(e1,e2,e3,e4,e5,bd);
+  // FAST/RME patient reads — single combined input. Auto-fill on first FAST or
+  // RME RN transition: total expected capacity = FAST × 4 + RME × 3.
+  if(typeof window._frPrev === 'undefined') window._frPrev = {fastRn:0, rmeRn:0};
+  let frPts=+g('frPts').value||0;
+  if((rnFast > 0 && window._frPrev.fastRn === 0) ||
+     (rnRme > 0 && window._frPrev.rmeRn === 0)){
+    const expected = rnFast*4 + rnRme*3;
+    if(expected > frPts){
+      frPts = expected;
+      g('frPts').value = frPts;
+    }
+  }
+  window._frPrev.fastRn = rnFast;
+  window._frPrev.rmeRn = rnRme;
+  const totalPtsAll=e1+e2+e3+e4+e5;
+  // Clamp FAST/RME ≤ total ESI (can't subtract more patients than exist)
+  if(frPts > totalPtsAll){
+    frPts = totalPtsAll;
+    g('frPts').value = frPts;
+  }
+  // Update the FAST/RME summary chip
+  if(frPts > 0){
+    g('frSum').textContent = `−${frPts} from main floor`;
+  } else {
+    g('frSum').textContent = `— subtracted from main floor`;
+  }
+  // Main-floor patient count = ESI total minus FAST/RME (those patients are
+  // accounted for by FAST/RME RNs, not main-floor RNs)
+  const totalPts=Math.max(0,totalPtsAll-frPts);
+  // Effective headcount = main-floor pts + boarder ratio adjustment
+  const totalPtsEff=totalPts+bdHeadAdj;
+  // APE subtraction: 1.05 per patient (~ESI 3 mid-acuity estimate)
+  const frApeSubtract = frPts*1.05;
+  const totalApeAll=ape(e1,e2,e3,e4,e5,bdApe);
+  const totalApe=Math.max(0,totalApeAll-frApeSubtract);
   const apeRn=totalApe/rn;
   const rec=Math.ceil(totalApe/4.0);
   const recMax=Math.ceil(totalApe/5.5);
   const diff=rn-rec;
 
-  // Signal
-  let key='optimal';
-  if(rn<recMax) key='callIn';
-  else if(diff>2) key='flex';
-  else if(diff>0) key='hold';
-  else if(diff<0) key='watch';
+  // ── Unified signal: headcount drives, APE modifies ──
+  // Headcount uses EFFECTIVE patient count (raw + boarder ratio adjustment).
+  // ICU boarder = 4 ED slots (already counted as 1, +3); PCU/IMCU/Peds = 1.33 (+0.33);
+  // Ortho/Surg/Med = 1.0 (no adjustment, matches ED 4:1).
+  //   < 3.5    → FLEX (under 4:1, eligible to flex)
+  //   3.5–4.05 → OPTIMAL (at 4:1 target)
+  //   4.06–5.0 → WATCH (over target, still safe)
+  //   > 5.0    → CALL IN (over headcount max)
+  // APE modifier (one notch only, never overrides safety):
+  //   APE/RN > 5.0 (heavy acuity) → bump up one (more cautious)
+  //   APE/RN < 4.0 (light acuity) → bump down one (more permissive)
+  const ppr = rn > 0 ? totalPtsEff / rn : 0;
+  // Bands as integer indices: 0=flex, 1=optimal, 2=watch, 3=callIn
+  let baseBand;
+  if(ppr <= 0) baseBand = 1;        // no patients → optimal
+  else if(ppr < 3.5) baseBand = 0; // flex
+  else if(ppr <= 4.05) baseBand = 1; // optimal
+  else if(ppr <= 5.0) baseBand = 2;  // watch
+  else baseBand = 3;                 // callIn
 
-  const SCFG={
-    optimal:{cls:'s-ok',  icon:'✓',tag:'OPTIMAL',  msg:'Staffing matches workload'},
-    hold:   {cls:'s-hold',icon:'⏸',tag:'HOLD',     msg:`${diff} RN${diff!==1?'s':''} above — hold for arrivals`},
-    watch:  {cls:'s-watch',icon:'!',tag:'WATCH',   msg:`${Math.abs(diff)} RN${Math.abs(diff)!==1?'s':''} below target`},
-    callIn: {cls:'s-call',icon:'⚠',tag:'CALL IN',  msg:`${rec-rn} more RN${(rec-rn)!==1?'s':''} needed now`},
-    flex:   {cls:'s-flex',icon:'↓',tag:'FLEX OFF', msg:`${Math.min(diff-1,3)} RN${Math.min(diff-1,3)!==1?'s':''} can flex off`},
+  // ── WR pressure gate (prevent FLEX into known incoming load) ──
+  // Weight WR patients by ESI urgency — what fraction is likely to need a bed soon:
+  //   ESI 1-2: 1.0 (immediate, life-threatening or critical)
+  //   ESI 3:   0.85 (likely to be roomed within an hour)
+  //   ESI 4-5: 0.4 (often wait, sometimes treat-and-street from triage)
+  //   Untriaged: 0.6 (assume average mix until triaged)
+  const WR_URGENCY = {wr12: 1.0, wr3: 0.85, wr45: 0.4, wru: 0.6};
+  const imminentWR = wr12*WR_URGENCY.wr12 + wr3*WR_URGENCY.wr3
+                   + wr45*WR_URGENCY.wr45 + wru*WR_URGENCY.wru;
+  // Projected PPR if imminent WR were roomed and assigned to current RN pool
+  const projPpr = rn > 0 ? (totalPtsEff + imminentWR) / rn : 0;
+  // How many RNs can safely flex — must keep BOTH:
+  //   (a) current PPR at/under 4.0 AND
+  //   (b) projected PPR (after WR rooms in) at/under 4.0
+  // Uses effective headcount throughout (boarder ratio adjusted).
+  let flexCount = 0;
+  if(rn > 1){
+    let testRn = rn - 1;
+    while(testRn >= 1
+          && totalPtsEff/testRn <= 4.0
+          && (totalPtsEff + imminentWR)/testRn <= 4.0){
+      flexCount++;
+      testRn--;
+    }
+  }
+  // Gate: if base band says FLEX but the WR-aware flex count is 0,
+  // bump up to OPTIMAL with a clear "WR pressure" reason
+  let wrGated = false;
+  let wrGateReason = '';
+  if(baseBand === 0 && flexCount === 0 && imminentWR > 0){
+    wrGated = true;
+    wrGateReason = `WR pressure (~${n(imminentWR,1)} imminent)`;
+    baseBand = 1; // bump up to OPTIMAL
+  }
+  // For the OPTIMAL message when gated: project PPR after a hypothetical 1-RN flex
+  const projPprAfterFlex = rn > 1 ? (totalPtsEff + imminentWR) / (rn - 1) : Infinity;
+
+  // APE modifier (one notch only, never overrides safety)
+  //   APE/RN > 5.0 (heavy acuity) → bump up one (more cautious)
+  //   APE/RN < 4.0 (light acuity) → bump down one (more permissive)
+  // BUT: if WR gate already moved us up, light-acuity modifier cannot pull us back down
+  // past the gate (would defeat the WR safety check).
+  let apeMod = 0;
+  let apeModReason = '';
+  if(rn > 0 && apeRn > 0){
+    if(apeRn > 5.0 && baseBand < 3){
+      apeMod = +1;
+      apeModReason = `acuity heavy (${n(apeRn,2)} APE/RN)`;
+    } else if(apeRn < 4.0 && baseBand > 0 && !wrGated){
+      apeMod = -1;
+      apeModReason = `acuity light (${n(apeRn,2)} APE/RN)`;
+    }
+  }
+  const finalBandPostApe = Math.max(0, Math.min(3, baseBand + apeMod));
+
+  // Break mode is read once and used by both the gate (below) and the break-card
+  // render later in this function. Must come before the gate.
+  const breakMode = shift.breakMode || 'standard';
+
+  // ── Break coverage gate (insufficient break RNs forces signal downgrade) ──
+  // If break coverage is short, the floor can't safely sustain assignments
+  // through the shift even if instantaneous PPR/APE looks fine. Bump up one
+  // band, sticky against light-acuity modifier (won't soften past the gate).
+  // Does NOT fire on small floors (assignable<6) where break coverage is "n/a".
+  const _bcSig = breakCoverage(rn, rnBreak, breakMode);
+  let breakGated = false;
+  let breakGateReason = '';
+  if(_bcSig.status === 'short' && finalBandPostApe < 3){
+    breakGated = true;
+    breakGateReason = `break coverage short by ${_bcSig.delta}`;
+  }
+  const finalBand = breakGated
+    ? Math.min(3, finalBandPostApe + 1)
+    : finalBandPostApe;
+  const bandKeys = ['flex','optimal','watch','callIn'];
+  const key = bandKeys[finalBand];
+  // How many RNs needed to bring ppr to ≤ 4.0
+  const callinNeed = ppr > 4.0 ? Math.ceil(totalPtsEff/4.0 - rn) : 0;
+  // Display strings — headcount in lead, APE inline as co-consideration, modifier note when active
+  const apeFrag = apeRn > 0 ? `, ${n(apeRn,2)} APE/RN` : '';
+  const apeNote = apeMod !== 0 ? ` · adjusted for ${apeModReason}` : '';
+  const wrNote = wrGated ? ` · held by ${wrGateReason}` : '';
+  const brkNote = breakGated ? ` · ${breakGateReason}` : '';
+  // Compose OPTIMAL message — special case when WR-gated (charge would otherwise see FLEX)
+  let optimalMsg;
+  if(ppr <= 0){
+    optimalMsg = `At target — staffing matches workload${apeNote}${wrNote}${brkNote}`;
+  } else if(wrGated){
+    optimalMsg = `Hold — light now (${n(ppr,2)} pts/RN${apeFrag}) but flexing would push to ${n(projPprAfterFlex,2)}:1 with WR${apeNote}${brkNote}`;
+  } else if(breakGated){
+    optimalMsg = `Hold — ${n(ppr,2)} pts/RN${apeFrag}, but ${breakGateReason}`;
+  } else {
+    optimalMsg = `At target — ${n(ppr,2)} pts/RN${apeFrag}${apeNote}`;
+  }
+  // Tag for OPTIMAL band: distinguish WR vs BRK gates (WR wins display priority if both)
+  const optimalTag = wrGated ? 'HOLD · WR' : breakGated ? 'HOLD · BRK' : 'OPTIMAL';
+  const watchTag = breakGated ? 'WATCH · BRK' : 'WATCH';
+  const callTag = breakGated ? 'CALL IN · BRK' : 'CALL IN';
+  const SCFG = {
+    optimal: {cls:'s-ok',   icon:'✓', tag: optimalTag,
+              msg: optimalMsg},
+    watch:   {cls:'s-watch',icon:'!', tag: watchTag,
+              msg:`${n(ppr,2)} pts/RN${apeFrag} — above 4:1 target${apeNote}${brkNote}`},
+    callIn:  {cls:'s-call', icon:'⚠', tag: callTag,
+              msg:`${n(ppr,2)} pts/RN${apeFrag} — over 5:1 max${callinNeed>0?`; ${callinNeed} more RN${callinNeed!==1?'s':''} needed`:''}${apeNote}${brkNote}`},
+    flex:    {cls:'s-flex', icon:'↓', tag:'FLEX OFF',
+              msg: flexCount>0 ? `Flex ${flexCount} RN${flexCount!==1?'s':''} — ${n(ppr,2)} pts/RN${apeFrag}${apeNote}` : `Eligible to flex — ${n(ppr,2)} pts/RN${apeFrag}${apeNote}`},
   };
-  const cfg=SCFG[key];
-  g('sig').className='signal '+cfg.cls;
-  g('sigI').textContent=cfg.icon;
-  g('sigT').textContent=cfg.tag;
-  g('sigM').textContent=cfg.msg;
-  g('sigS').textContent=`${n(apeRn,2)}:1 APE per RN · rec ${rec} assignable`;
-  g('recN').textContent=rec;
+  const sigCfg = SCFG[key];
+  g('sig').className = 'signal ' + sigCfg.cls;
+  g('sigI').textContent = sigCfg.icon;
+  g('sigT').textContent = sigCfg.tag;
+  g('sigM').textContent = sigCfg.msg;
+  // Sub-line: show effective vs raw when ratio adjustment is non-zero, plus
+  // FAST/RME subtraction when present
+  let ptsLabel;
+  if(bdHeadAdj > 0 && frPts > 0){
+    ptsLabel = `${n(totalPtsEff,1)} pts (${totalPts} main +${n(bdHeadAdj,1)} ratio adj · ${frPts} FAST/RME)`;
+  } else if(bdHeadAdj > 0){
+    ptsLabel = `${n(totalPtsEff,1)} pts (${totalPts} raw +${n(bdHeadAdj,1)} ratio adj)`;
+  } else if(frPts > 0){
+    ptsLabel = `${totalPts} pts (${totalPtsAll} total · ${frPts} FAST/RME)`;
+  } else {
+    ptsLabel = `${totalPts} pts`;
+  }
+  g('sigS').textContent = `${rn} assignable · ${ptsLabel} · target 4:1 · max 5:1`;
+  g('recN').textContent = rec;
 
-  // 2hr projection
+  // 2hr projection — use today's adjusted historical baseline
+  // (148 × day-of-week × month multipliers).
+  const _2hrToday=new Date();
+  const _fcBase=Math.round(148*DOW_MULT[_2hrToday.getDay()]*MONTH_MULT[_2hrToday.getMonth()]);
   let arr2=0;
-  for(let i=1;i<=2;i++) arr2+=148*APCT[(curHr+i)%24]/ASUM;
+  for(let i=1;i<=2;i++) arr2+=_fcBase*APCT[(curHr+i)%24]/ASUM;
   const nPts=Math.round(arr2*.7);
-  const ape2=ape(e1,e2,e3+Math.round(nPts*.55)-Math.round(totalPts*.12),e4+Math.round(nPts*.25),e5,bd+Math.round(nPts*.27));
+  const ape2=ape(e1,e2,e3+Math.round(nPts*.55)-Math.round(totalPts*.12),e4+Math.round(nPts*.25),e5,bdApe+Math.round(nPts*.27)*0.3);
   const r2=Math.ceil(Math.max(ape2,totalApe*.85)/4.0);
   g('rec2').textContent=`${r2>rec?'↑':r2<rec?'↓':'→'} ${r2} in 2 hrs`;
 
   // Break coverage chip + mode toggle (uses apeRn computed above)
-  const breakMode=shift.breakMode||'standard';
+  // breakMode declared earlier (above gate logic)
   g('bmStd').classList.toggle('active',breakMode==='standard');
   g('bmCmp').classList.toggle('active',breakMode==='compressed');
   const sugg=g('bmSuggest');
@@ -860,19 +2066,19 @@ function go(){
   if(bc.status==='na'){
     bSig.className='brk-sig brk-na';
     bSig.textContent='— small floor: break coverage flexible';
-    bNote.textContent='Break/floater not formally required at this assignable count.';
+    bNote.textContent='Break/resource not formally required at this assignable count.';
   } else if(bc.status==='ok'){
     bSig.className='brk-sig brk-ok';
     bSig.textContent=`✓ Break coverage adequate · ${rnBreak}/${bc.rec}`;
     bNote.textContent=ruleNote;
   } else if(bc.status==='short'){
     bSig.className='brk-sig brk-short';
-    bSig.textContent=`! ${bc.delta} more break/floater needed · ${rnBreak}/${bc.rec}`;
+    bSig.textContent=`! ${bc.delta} more break/resource needed · ${rnBreak}/${bc.rec}`;
     bNote.textContent=`Risk of missed/late breaks. ${ruleNote}.`;
   } else {
     // surplus
     bSig.className='brk-sig brk-flex';
-    bSig.textContent=`↓ ${bc.delta} break/floater can flex · ${rnBreak}/${bc.rec}`;
+    bSig.textContent=`↓ ${bc.delta} break/resource can flex · ${rnBreak}/${bc.rec}`;
     bNote.textContent=`Eligible for productivity flex without compromising ${breakMode==='compressed'?'compressed':'standard'} break coverage.`;
   }
 
@@ -886,8 +2092,19 @@ function go(){
   // Breakdown
   const rows=[['ESI 1×'+e1,e1*W[1],'#ff8070'],['ESI 2×'+e2,e2*W[2],'#ffbb55'],
     ['ESI 3×'+e3,e3*W[3],'var(--amber)'],['ESI 4×'+e4,e4*W[4],'var(--blue)'],
-    ['ESI 5×'+e5,e5*W[5],'var(--green)'],['Board×'+bd,bd*W.b,'var(--purple)']].filter(r=>r[1]>0);
-  g('apeBreak').innerHTML=rows.map(([l,v,c])=>`<tr><td>${l}</td><td style="color:${c}">${n(v,1)}</td></tr>`).join('')
+    ['ESI 5×'+e5,e5*W[5],'var(--green)']];
+  // Add boarder rows by destination, only if non-zero
+  const bdRows=[
+    ['ICU×'+bdCounts.icu,    bdCounts.icu*BW.icu,    '#ff8070'],
+    ['PCU×'+bdCounts.pcu,    bdCounts.pcu*BW.pcu,    '#ffa066'],
+    ['IMCU×'+bdCounts.imcu,  bdCounts.imcu*BW.imcu,  '#ffba6a'],
+    ['Peds×'+bdCounts.peds,  bdCounts.peds*BW.peds,  '#ffce80'],
+    ['Ortho×'+bdCounts.ortho,bdCounts.ortho*BW.ortho,'var(--purple)'],
+    ['Surg×'+bdCounts.surg,  bdCounts.surg*BW.surg,  'var(--blue)'],
+    ['Med×'+bdCounts.med,    bdCounts.med*BW.med,    'var(--green)'],
+  ];
+  const allRows=[...rows,...bdRows].filter(r=>r[1]>0);
+  g('apeBreak').innerHTML=allRows.map(([l,v,c])=>`<tr><td>${l}</td><td style="color:${c}">${n(v,1)}</td></tr>`).join('')
     +`<tr style="border-top:1px solid var(--b2)"><td style="font-weight:500;color:var(--t1)">Total APE</td><td style="color:${ac};font-weight:500">${n(totalApe,1)}</td></tr>`;
 
   // Bands
@@ -903,9 +2120,60 @@ function go(){
   }).join('');
   g('diffDisp').textContent=`${rn} assignable · ${diff===0?'at target':diff>0?'+'+diff+' vs target':diff+' vs target'}`;
 
+  // ── Literal headcount ratio (separate from APE) ──
+  // Counts actual roomed patients (not boarders, since boarders are typically less hands-on
+  // for the assignable RN pool — they're also weighted lower in APE on purpose).
+  // PPR is computed up at the signal-bar block; reuse it here.
+  // For display, show as ratio "X.X : 1"
+  g('hcrPpr').textContent = ppr > 0 ? ppr.toFixed(2) : '—';
+  g('hcrApe').textContent = apeRn > 0 ? apeRn.toFixed(2) : '—';
+  // Status badges
+  function pprStatus(v){
+    if(v<=0) return ['—',''];
+    if(v<3.5) return ["UNDER TARGET","s-under"];
+    if(v<=4.05) return ['AT TARGET','s-good'];
+    if(v<=5.0) return ['WATCH','s-watch'];
+    return ['OVER','s-over'];
+  }
+  function apeRnStatus(v){
+    if(v<=0) return ['—',''];
+    if(v<=4.0) return ['AT TARGET','s-good'];
+    if(v<=5.5) return ['WATCH','s-watch'];
+    return ['OVER','s-over'];
+  }
+  const [pprLbl, pprCls] = pprStatus(ppr);
+  const [aprLbl, aprCls] = apeRnStatus(apeRn);
+  g('hcrPpr').style.color = pprCls==='s-under' ? 'var(--blue)' : pprCls==='s-good' ? 'var(--green)' : pprCls==='s-watch' ? 'var(--amber)' : pprCls==='s-over' ? 'var(--red)' : 'var(--t1)';
+  g('hcrApe').style.color = aprCls==='s-good' ? 'var(--green)' : aprCls==='s-watch' ? 'var(--amber)' : aprCls==='s-over' ? 'var(--red)' : 'var(--t1)';
+  g('hcrPprStatus').className = 'hcr-status ' + pprCls;
+  g('hcrPprStatus').textContent = pprLbl;
+  g('hcrApeStatus').className = 'hcr-status ' + aprCls;
+  g('hcrApeStatus').textContent = aprLbl;
+  // Divergence note — when the two pictures disagree meaningfully
+  const divEl = g('hcrDiv');
+  if(ppr<=0){
+    divEl.style.display='none';
+  } else {
+    const gap = apeRn - ppr;
+    if(Math.abs(gap) < 0.5){
+      // They agree — quiet
+      divEl.style.display='none';
+    } else if(gap >= 0.5){
+      // APE-per-RN is higher than headcount — heavy-acuity floor
+      divEl.style.display='block';
+      divEl.className='hcr-divergence hcr-div-warn';
+      divEl.textContent = `Acuity is heavier than headcount suggests — ${ppr.toFixed(1)} pts/RN feels closer to ${apeRn.toFixed(1)}:1 in workload. Consider this when balancing assignments.`;
+    } else {
+      // APE per RN is lower than headcount — lighter than the body count looks
+      divEl.style.display='block';
+      divEl.className='hcr-divergence hcr-div-good';
+      divEl.textContent = `Headcount looks tight (${ppr.toFixed(1)} pts/RN) but acuity is light — workload registers as ${apeRn.toFixed(1)} APE/RN.`;
+    }
+  }
+
   // Waiting room
   const wrTotal=wr12+wr3+wr45+wru;
-  const wrApe=wr12*2.5+wr3*1.5+wr45*0.8+wru*1.2;
+  const wrApe=wr12*2.1+wr3*1.25+wr45*0.7+wru*1.0;
   const proj=g('wrProj');
   if(wrTotal===0){
     proj.style.cssText='border-left-color:var(--t3);background:var(--s2)';
@@ -938,12 +2206,13 @@ function go(){
 
   // Scenarios
   const scens=[
-    {l:'+ 2 ESI-3 walk-ins',       f:()=>ape(e1,e2,e3+2,e4,e5,bd)},
-    {l:'+ 1 ESI-2 ALS arrival',    f:()=>ape(e1,e2+1,e3,e4,e5,bd)},
-    {l:'+ 1 BH sitter patient',    f:()=>ape(e1,e2,e3+1,e4,e5,bd)},
-    {l:'− 3 discharges',           f:()=>ape(e1,e2,e3,Math.max(0,e4-2),Math.max(0,e5-1),bd)},
-    {l:'+ 1 admit → boarder',      f:()=>ape(e1,e2,e3,e4,e5,bd+1)},
-    {l:'Waiting room all rooms in', f:()=>ape(e1+wr12,e2,e3+wr3,e4+wr45,e5,bd)},
+    {l:'+ 2 ESI-3 walk-ins',       f:()=>ape(e1,e2,e3+2,e4,e5,bdApe)},
+    {l:'+ 1 ESI-2 ALS arrival',    f:()=>ape(e1,e2+1,e3,e4,e5,bdApe)},
+    {l:'+ 1 BH sitter patient',    f:()=>ape(e1,e2,e3+1,e4,e5,bdApe)},
+    {l:'− 3 discharges',           f:()=>ape(e1,e2,e3,Math.max(0,e4-2),Math.max(0,e5-1),bdApe)},
+    {l:'+ 1 admit → Medical bed',  f:()=>ape(e1,e2,e3,e4,e5,bdApe+BW.med)},
+    {l:'+ 1 admit → ICU bed',      f:()=>ape(e1,e2,e3,e4,e5,bdApe+BW.icu)},
+    {l:'Waiting room all rooms in', f:()=>ape(e1+wr12,e2,e3+wr3,e4+wr45,e5,bdApe)},
   ];
   g('scenarios').innerHTML=scens.map(({l,f})=>{
     const a=f(), r=Math.ceil(a/4.0), d2=r-rn;
@@ -953,14 +2222,238 @@ function go(){
     return`<div class="sc-item"><span style="color:var(--t2)">${l}</span><span style="font-family:var(--mono);color:${col}">${txt}</span></div>`;
   }).join('');
 
-  // Forecast
-  const fa=[...Array(6)].map((_,i)=>148*APCT[(curHr+i)%24]/ASUM);
-  const fm=Math.max(...fa,1);
-  g('fcBars').innerHTML=fa.map((v,i)=>`<div class="fc-bar ${i===0?'fc-now':i<=2?'fc-soon':'fc-later'}" style="height:${Math.max(4,Math.round(v/fm*100))}%" title="${HR[(curHr+i)%24]}: ${v.toFixed(1)}/hr"></div>`).join('');
-  g('fcLbls').innerHTML=fa.map((_,i)=>i%2===0?`<span>${HR[(curHr+i)%24]}</span>`:'<span></span>').join('');
-  const n2=fa.slice(1,3).reduce((a,b)=>a+b,0);
-  const n4=fa.slice(1,5).reduce((a,b)=>a+b,0);
-  g('fcStat').textContent=`~${Math.round(n2)} arrivals next 2 hrs · ~${Math.round(n4)} next 4 hrs`;
+  // ── Forecast (reactive: historical baseline + today's actual pace) ──
+  // Historical baseline: 148/day from 2025 Bend ED Epic data (n=43,522 across 294 days).
+  // Adjusted by day-of-week and month based on actual patterns:
+  //   Mondays +5.4%, Sundays -6.6%; July +7.9% (peak), Nov-Dec ~-4% (trough)
+  // Pace projection: once ≥7h of arrivals data exist, project today's pace forward.
+  // Effective baseline = max(historical-adjusted, pace) — underestimating arrivals
+  // is the more dangerous error (causes false-positive flex calls).
+  const HISTORICAL_DAILY_RAW = 148;
+  const _today = new Date();
+  const _dowMult = DOW_MULT[_today.getDay()];
+  const _monthMult = MONTH_MULT[_today.getMonth()];
+  const HISTORICAL_DAILY = Math.round(HISTORICAL_DAILY_RAW * _dowMult * _monthMult);
+  // Read cumulative arrivals from productivity grid into per-period totals
+  const arrCumByPeriod = PERIODS.map((p,i) => {
+    const el = g(`pg_arr_${i}`);
+    return el ? Math.max(0, parseInt(el.value)||0) : 0;
+  });
+  // Find latest period with arrivals data
+  let paceLatestArr = 0;
+  let paceLatestHr = 0;
+  for(let i=PERIODS.length-1;i>=0;i--){
+    if(arrCumByPeriod[i] > 0){
+      paceLatestArr = arrCumByPeriod[i];
+      paceLatestHr = PERIODS[i].end;
+      break;
+    }
+  }
+  let pacedDaily = null;
+  if(paceLatestArr > 0 && paceLatestHr >= 7){
+    pacedDaily = Math.round(paceLatestArr * 24 / paceLatestHr);
+  }
+  const fcEffective = pacedDaily ? Math.max(HISTORICAL_DAILY, pacedDaily) : HISTORICAL_DAILY;
+
+  // Build per-hour arrivals array (24 entries, hour 0–23)
+  // For past hours we have cumulative data per period — derive per-hour by
+  // distributing within-period arrivals according to APCT shape.
+  const hourlyArrivals = new Array(24).fill(0); // estimated/actual count
+  const hourlyIsActual = new Array(24).fill(false);
+  let prevCum = 0;
+  PERIODS.forEach((p, i) => {
+    const cumNow = arrCumByPeriod[i];
+    if(cumNow > 0){
+      // Within-period actual arrivals = cumNow - prevCum
+      const periodArr = Math.max(0, cumNow - prevCum);
+      // Distribute across the period's hours by APCT proportions
+      const apctSlice = [];
+      for(let h = p.start; h < p.end; h++) apctSlice.push(APCT[h]);
+      const sliceSum = apctSlice.reduce((a,b)=>a+b,0) || 1;
+      apctSlice.forEach((wt, idx) => {
+        hourlyArrivals[p.start + idx] = periodArr * wt / sliceSum;
+        hourlyIsActual[p.start + idx] = true;
+      });
+      prevCum = cumNow;
+    }
+    // Else: leave zeros for now, fill in as estimate below
+  });
+  // Fill in any remaining hours (no actual data) with baseline × APCT
+  for(let h = 0; h < 24; h++){
+    if(!hourlyIsActual[h]){
+      hourlyArrivals[h] = fcEffective * APCT[h] / ASUM;
+    }
+  }
+  // Render full-day chart
+  const dayMax = Math.max(...hourlyArrivals, 1);
+  let dayBarsHTML = '';
+  let dayLblsHTML = '';
+  for(let h = 0; h < 24; h++){
+    let cls;
+    if(h < curHr){
+      cls = hourlyIsActual[h] ? 'past-actual' : 'past';
+    } else if(h === curHr){
+      cls = 'now';
+    } else {
+      cls = 'future';
+    }
+    const ht = Math.max(4, Math.round(hourlyArrivals[h] / dayMax * 100));
+    const titleSrc = hourlyIsActual[h] ? 'actual' : (h < curHr ? 'estimated' : 'forecast');
+    dayBarsHTML += `<div class="fc-day-bar ${cls}" style="height:${ht}%" title="${HR[h]}: ${hourlyArrivals[h].toFixed(1)} (${titleSrc})"></div>`;
+    // Show labels every 4 hours: 00, 04, 08, 12, 16, 20
+    dayLblsHTML += `<span>${h % 4 === 0 ? HR[h] : ''}</span>`;
+  }
+  g('fcDayBars').innerHTML = dayBarsHTML;
+  g('fcDayLbls').innerHTML = dayLblsHTML;
+  // Daily total summary in card title
+  const dayTotal = hourlyArrivals.reduce((a,b)=>a+b,0);
+  const actualTotal = hourlyArrivals.reduce((sum,v,h) => hourlyIsActual[h] ? sum+v : sum, 0);
+  if(actualTotal > 0){
+    g('fcDailyTotal').textContent = `${Math.round(actualTotal)} so far · est ${Math.round(dayTotal)} by midnight`;
+  } else {
+    g('fcDailyTotal').textContent = `est ${Math.round(dayTotal)} by midnight (no data yet)`;
+  }
+
+  // 6-hour zoom (unchanged structure but uses new effective baseline)
+  const fa = [...Array(6)].map((_,i) => {
+    const h = (curHr + i) % 24;
+    // For zoom view, prefer actual when available, else forecast
+    return hourlyIsActual[h] && i === 0 ? hourlyArrivals[h] : fcEffective * APCT[h] / ASUM;
+  });
+  const fm = Math.max(...fa, 1);
+  g('fcBars').innerHTML = fa.map((v,i) => `<div class="fc-bar ${i===0?'fc-now':i<=2?'fc-soon':'fc-later'}" style="height:${Math.max(4,Math.round(v/fm*100))}%" title="${HR[(curHr+i)%24]}: ${v.toFixed(1)}/hr"></div>`).join('');
+  g('fcLbls').innerHTML = fa.map((_,i) => i%2===0 ? `<span>${HR[(curHr+i)%24]}</span>` : '<span></span>').join('');
+  const n2 = fa.slice(1,3).reduce((a,b)=>a+b,0);
+  const n4 = fa.slice(1,5).reduce((a,b)=>a+b,0);
+  g('fcStat').textContent = `~${Math.round(n2)} arrivals next 2 hrs · ~${Math.round(n4)} next 4 hrs`;
+
+  // Pace indicator — describes baseline reasoning
+  const _dayName=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][_today.getDay()];
+  const _monthName=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_today.getMonth()];
+  const _baselineCtx = `${_dayName} ${_monthName} typical: ${HISTORICAL_DAILY}`;
+  const paceEl = g('fcPace');
+  if(pacedDaily === null){
+    paceEl.className = 'fc-pace';
+    paceEl.textContent = paceLatestArr > 0 ? `Pace: ${paceLatestArr} so far · need >7h of data for projection · ${_baselineCtx}` : `Pace: no arrivals data yet · ${_baselineCtx}`;
+  } else if(pacedDaily > HISTORICAL_DAILY){
+    paceEl.className = 'fc-pace adapted';
+    paceEl.textContent = `Pace: on track for ~${pacedDaily} (above ${_baselineCtx}) · forecast adapted up`;
+  } else {
+    paceEl.className = 'fc-pace';
+    paceEl.textContent = `Pace: on track for ~${pacedDaily} (within ${_baselineCtx})`;
+  }
+
+  // 2hr APE projection — also use the effective baseline so it stays consistent
+  // (replaces the hardcoded 148 from before)
+
+  // ── Productivity score (per-period grid) ──
+  const _now=new Date();
+  const prodHrsIn = _now.getHours() + _now.getMinutes()/60 + _now.getSeconds()/3600;
+  const curPeriodIdx = getCurrentPeriod(prodHrsIn);
+  // Apply visual styling to header cells and inputs based on past/current/future
+  PERIODS.forEach((p,i) => {
+    const headerCell = document.querySelector(`#pgHeaderRow th[data-period="${i}"]`);
+    if(headerCell){
+      headerCell.classList.remove('pg-now','pg-future');
+      if(i===curPeriodIdx) headerCell.classList.add('pg-now');
+      else if(i>curPeriodIdx) headerCell.classList.add('pg-future');
+    }
+    PG_ROLES.forEach(r => {
+      const cell = document.querySelector(`#pgBody td[data-period="${i}"] #pg_${r.key}_${i}`);
+      if(cell){
+        cell.classList.toggle('pg-future', i>curPeriodIdx);
+        cell.parentElement.classList.toggle('pg-now-col', i===curPeriodIdx);
+        cell.parentElement.classList.toggle('pg-future', i>curPeriodIdx);
+      }
+    });
+    const arrCell = g(`pg_arr_${i}`);
+    if(arrCell){
+      arrCell.classList.toggle('pg-future', i>curPeriodIdx);
+      arrCell.parentElement.classList.toggle('pg-now-col', i===curPeriodIdx);
+      arrCell.parentElement.classList.toggle('pg-future', i>curPeriodIdx);
+    }
+  });
+  const grid = computeProductivityGrid(curPeriodIdx);
+  // Update per-period UOS row
+  PERIODS.forEach((p,i) => {
+    const cell = g(`pgUos_${i}`);
+    if(!cell) return;
+    cell.classList.remove('pg-uos-good','pg-uos-watch','pg-uos-over');
+    const u = grid.periodUos[i];
+    if(u == null){
+      cell.textContent = (i>curPeriodIdx) ? '' : '—';
+    } else {
+      cell.textContent = u.toFixed(2);
+      if(u<=TARGET_UOS) cell.classList.add('pg-uos-good');
+      else if(u<=3.54) cell.classList.add('pg-uos-watch');
+      else cell.classList.add('pg-uos-over');
+    }
+  });
+  // Big score display
+  const barMax = 5.0;
+  const cur = grid.current;
+  if(grid.status==='empty' || cur.uos == null){
+    g('prodNum').textContent = '—';
+    g('prodNum').style.color = 'var(--t3)';
+    g('prodStatus').className = 'prod-status';
+    g('prodStatus').textContent = 'NO DATA';
+    g('prodBarFill').style.width = '0%';
+  } else {
+    g('prodNum').textContent = cur.uos.toFixed(2);
+    const colMap = {efficient:'var(--green)',good:'var(--green)',watch:'var(--amber)',over:'var(--red)'};
+    g('prodNum').style.color = colMap[grid.status];
+    const labelMap = {efficient:'EFFICIENT',good:'ON TARGET',watch:'WATCH',over:'OVER'};
+    const classMap = {efficient:'p-good',good:'p-good',watch:'p-watch',over:'p-over'};
+    g('prodStatus').className = 'prod-status ' + classMap[grid.status];
+    g('prodStatus').textContent = labelMap[grid.status];
+    g('prodBarFill').style.cssText = `width:${Math.min(100, cur.uos/barMax*100)}%;background:${colMap[grid.status]}`;
+  }
+  g('prodBarTarget').style.left = `${TARGET_UOS/barMax*100}%`;
+  // Header showing where in the day we are
+  const dayPct = (prodHrsIn/24*100).toFixed(0);
+  g('prodElapsed').textContent = `${prodHrsIn.toFixed(1)} hr · in ${PERIODS[curPeriodIdx].label} · ${dayPct}% through day`;
+  // Detail line
+  if(grid.status==='empty' || cur.uos == null){
+    g('prodDetail').innerHTML = '<span style="color:var(--t3)">Enter staff counts in the periods that have happened, plus cumulative arrivals through the period. Score updates as you fill it in.</span>';
+  } else {
+    const periodsFilledHrs = grid.periodHrs.slice(0, cur.periodIdx+1).reduce((a,b)=>a+b,0);
+    g('prodDetail').innerHTML = [
+      `Through <strong>${PERIODS[cur.periodIdx].label}</strong>: ${cur.cumHrs.toFixed(1)} hr ÷ ${(cur.arrivals + cur.projEqv).toFixed(1)} UOS = <strong>${cur.uos.toFixed(2)}</strong>`,
+      `Cumulative staff hrs: ${periodsFilledHrs.toFixed(1)}h`,
+      `UOS denom: ${cur.arrivals} arrivals + ${cur.projEqv.toFixed(1)} eqv (boarder credit baked in)`,
+      `<span style="color:var(--t3)">Daily file score will be ~0.3 higher (it doesn't include boarder credit until month-end)</span>`,
+    ].join('<br>');
+  }
+
+  // Actionable hint
+  const hint = g('prodHint');
+  if(grid.status==='empty' || cur.uos == null){
+    hint.style.display='none';
+  } else if(grid.status==='over'){
+    const canFlex = (key==='flex' || (key==='optimal' && totalApe/(rn-1)<=4.0 && rn>1));
+    if(canFlex){
+      const remaining = Math.max(0, 24 - prodHrsIn);
+      hint.style.display='block';
+      hint.className='prod-flex-hint alert-over';
+      hint.innerHTML=`⚠ Currently ${(cur.uos-TARGET_UOS).toFixed(2)} above target. Floor is light — flexing 1 RN now saves ~${remaining.toFixed(1)} hr through end of day.`;
+    } else {
+      hint.style.display='block';
+      hint.className='prod-flex-hint alert-watch';
+      hint.innerHTML=`Over ${TARGET_UOS.toFixed(2)} target, but staffing matches workload — flexing would compromise safety. Document for trend tracking.`;
+    }
+  } else if(grid.status==='watch'){
+    hint.style.display='block';
+    hint.className='prod-flex-hint alert-watch';
+    hint.innerHTML=`Slightly over target. Watch for opportunity to flex if floor lightens.`;
+  } else if(grid.status==='efficient' && key==='callIn'){
+    hint.style.display='block';
+    hint.className='prod-flex-hint alert-watch';
+    hint.innerHTML=`Score efficient but staffing is unsafe — call-in trumps productivity.`;
+  } else {
+    hint.style.display='none';
+  }
+  // Live-sync: push current state to Firestore (debounced, no-op if disabled or applying remote)
+  if(typeof pushSync === 'function') pushSync();
 }
 
 function updateClock(){
@@ -972,11 +2465,14 @@ function updateClock(){
 }
 
 // Initial render
+buildPeriodGrid();
 renderLog();
 updateClock();
 setInterval(updateClock,30000);
 // Faster cadence for the q3h countdown so it ticks visibly
 setInterval(renderQ3H,15000);
+// Kick off live-sync (waits for firebase-ready event or falls back to offline)
+initSync();
 </script>
 </body>
 </html>
